@@ -36,7 +36,7 @@ class SessionManager {
       case 'generic':
         return GenericAdapter(command: command ?? '');
       default:
-        return GenericAdapter(command: cliToolId);
+        return GenericAdapter(command: command ?? cliToolId);
     }
   }
 
@@ -68,6 +68,7 @@ class SessionManager {
       id: sessionId,
       serverId: server.id,
       cliToolId: cliTool.id,
+      cliToolCommand: cliTool.command,
       tmuxSessionName: tmuxName,
       title: '${cliTool.name} - ${server.name}$suffix',
       status: SessionStatus.active,

@@ -112,6 +112,7 @@ class SessionAdapter extends TypeAdapter<Session> {
       id: fields[0] as String,
       serverId: fields[1] as String,
       cliToolId: fields[2] as String,
+      cliToolCommand: fields[9] as String?,
       tmuxSessionName: fields[3] as String,
       title: fields[4] as String,
       status: fields[5] as SessionStatus? ?? SessionStatus.connecting,
@@ -124,7 +125,7 @@ class SessionAdapter extends TypeAdapter<Session> {
   @override
   void write(BinaryWriter writer, Session obj) {
     writer
-      ..writeByte(9)
+      ..writeByte(10)
       ..writeByte(0)..write(obj.id)
       ..writeByte(1)..write(obj.serverId)
       ..writeByte(2)..write(obj.cliToolId)
@@ -133,7 +134,8 @@ class SessionAdapter extends TypeAdapter<Session> {
       ..writeByte(5)..write(obj.status)
       ..writeByte(6)..write(obj.createdAt)
       ..writeByte(7)..write(obj.lastActiveAt)
-      ..writeByte(8)..write(obj.workingDir);
+      ..writeByte(8)..write(obj.workingDir)
+      ..writeByte(9)..write(obj.cliToolCommand);
   }
 }
 

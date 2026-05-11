@@ -205,7 +205,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final connState = ref.read(sshConnectionProvider(widget.server.id));
     final conn = connState.valueOrNull;
     if (conn == null) return null;
-    final adapter = SessionManager.getAdapter(widget.session.cliToolId);
+    final adapter = SessionManager.getAdapter(
+      widget.session.cliToolId,
+      command: widget.session.cliToolCommand,
+    );
     return adapter.getStartCommand(workingDir: widget.session.workingDir);
   }
 
