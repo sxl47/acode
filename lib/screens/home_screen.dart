@@ -62,6 +62,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         title: const Text('ACode'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.brightness_6),
+            tooltip: 'Toggle theme',
+            onPressed: () {
+              ref.read(themeModeProvider.notifier).toggle();
+            },
+          ),
+          IconButton(
             icon: _scanning
                 ? const SizedBox(
                     width: 20,
@@ -388,6 +395,19 @@ class _ServerDetailSheet extends ConsumerStatefulWidget {
 
 class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
   bool _connecting = false;
+  late final TextEditingController _workDirCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _workDirCtrl = TextEditingController(text: widget.server.defaultWorkingDir);
+  }
+
+  @override
+  void dispose() {
+    _workDirCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -443,6 +463,21 @@ class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _workDirCtrl,
+                decoration: InputDecoration(
+                  labelText: 'Working Directory',
+                  hintText: '~/projects/myapp',
+                  prefixIcon: const Icon(Icons.folder_open, size: 20),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  isDense: true,
+                ),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
               ),
               const SizedBox(height: 12),
               cliToolsAsync.when(
@@ -600,11 +635,16 @@ class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
             .connect(widget.server);
       }
 
+      final workDir = _workDirCtrl.text.trim().isNotEmpty
+          ? _workDirCtrl.text.trim()
+          : null;
+
       final session = await ref
           .read(serverSessionsProvider(widget.server.id).notifier)
           .createSession(
             server: widget.server,
             cliTool: tool,
+            workingDir: workDir,
           );
 
       if (mounted) {

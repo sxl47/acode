@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/server_config.dart';
@@ -10,6 +11,48 @@ final serversBoxProvider = FutureProvider<Box<ServerConfig>>((ref) async {
 final cliToolsBoxProvider = FutureProvider<Box<CliTool>>((ref) async {
   return await Hive.openBox<CliTool>('cli_tools');
 });
+
+final settingsBoxProvider = FutureProvider<Box>((ref) async {
+  return await Hive.openBox('settings');
+});
+
+final themeModeProvider =
+    NotifierProvider<ThemeModeNotifier, ThemeMode>(ThemeModeNotifier.new);
+
+class ThemeModeNotifier extends Notifier<ThemeMode> {
+  @override
+  ThemeMode build() {
+    _loadTheme();
+    return ThemeMode.dark;
+  }
+
+  Future<void> _loadTheme() async {
+    try {
+      final box = await ref.read(settingsBoxProvider.future);
+      final savedTheme = box.get('themeMode', defaultValue: 'dark');
+      state = savedTheme == 'light' ? ThemeMode.light : ThemeMode.dark;
+    } catch (_) {
+      state = ThemeMode.dark;
+    }
+  }
+
+  Future<void> toggle() async {
+    state = state == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark;
+    await _saveTheme();
+  }
+
+  Future<void> setTheme(ThemeMode mode) async {
+    state = mode;
+    await _saveTheme();
+  }
+
+  Future<void> _saveTheme() async {
+    try {
+      final box = await ref.read(settingsBoxProvider.future);
+      await box.put('themeMode', state == ThemeMode.light ? 'light' : 'dark');
+    } catch (_) {}
+  }
+}
 
 final serversProvider =
     AsyncNotifierProvider<ServersNotifier, List<ServerConfig>>(

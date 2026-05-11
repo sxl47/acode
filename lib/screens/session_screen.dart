@@ -1,17 +1,14 @@
-import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:uuid/uuid.dart';
+import 'package:xterm/xterm.dart';
 import '../models/session.dart';
 import '../models/server_config.dart';
-import '../models/chat_message.dart';
 import '../services/session_manager.dart';
 import '../services/terminal_service.dart';
 import '../providers/ssh_provider.dart';
 import '../providers/session_provider.dart';
+import '../providers/settings_provider.dart';
 
 class SessionScreen extends ConsumerStatefulWidget {
   final Session session;
@@ -29,16 +26,70 @@ class SessionScreen extends ConsumerStatefulWidget {
 
 class _SessionScreenState extends ConsumerState<SessionScreen>
     with WidgetsBindingObserver {
-  final _inputCtrl = TextEditingController();
-  final _scrollCtrl = ScrollController();
-  final _uuid = const Uuid();
-  final List<XFile> _pendingImages = [];
-  final List<String> _terminalLines = [];
-  TerminalService? _terminal;
-  StreamSubscription? _outputSub;
-  bool _sending = false;
+  final Terminal _terminal = Terminal(maxLines: 10000);
+  TerminalService? _terminalService;
   bool _connected = false;
   String _connectionStatus = 'Connecting...';
+  bool _isConnecting = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 10;
+
+  static const _darkTheme = TerminalTheme(
+    cursor: Color(0xFFAEAFAD),
+    selection: Color(0xFFAEAFAD),
+    foreground: Color(0xFFCCCCCC),
+    background: Color(0xFF0D1117),
+    black: Color(0xFF000000),
+    red: Color(0xFFCD3131),
+    green: Color(0xFF0DBC79),
+    yellow: Color(0xFFE5E510),
+    blue: Color(0xFF2472C8),
+    magenta: Color(0xFFBC3FBC),
+    cyan: Color(0xFF11A8CD),
+    white: Color(0xFFE5E5E5),
+    brightBlack: Color(0xFF666666),
+    brightRed: Color(0xFFF14C4C),
+    brightGreen: Color(0xFF23D18B),
+    brightYellow: Color(0xFFF5F543),
+    brightBlue: Color(0xFF3B8EEA),
+    brightMagenta: Color(0xFFD670D6),
+    brightCyan: Color(0xFF29B8DB),
+    brightWhite: Color(0xFFFFFFFF),
+    searchHitBackground: Color(0xFFFFFF2B),
+    searchHitBackgroundCurrent: Color(0xFF31FF26),
+    searchHitForeground: Color(0xFF000000),
+  );
+
+  static const _lightTheme = TerminalTheme(
+    cursor: Color(0xFF4D4D4D),
+    selection: Color(0xFFBDBDBD),
+    foreground: Color(0xFF333333),
+    background: Color(0xFFFFFFFF),
+    black: Color(0xFF000000),
+    red: Color(0xFFCD3131),
+    green: Color(0xFF0DBC79),
+    yellow: Color(0xFFE5E510),
+    blue: Color(0xFF2472C8),
+    magenta: Color(0xFFBC3FBC),
+    cyan: Color(0xFF11A8CD),
+    white: Color(0xFFE5E5E5),
+    brightBlack: Color(0xFF666666),
+    brightRed: Color(0xFFF14C4C),
+    brightGreen: Color(0xFF23D18B),
+    brightYellow: Color(0xFFF5F543),
+    brightBlue: Color(0xFF3B8EEA),
+    brightMagenta: Color(0xFFD670D6),
+    brightCyan: Color(0xFF29B8DB),
+    brightWhite: Color(0xFFFFFFFF),
+    searchHitBackground: Color(0xFFFFFF2B),
+    searchHitBackgroundCurrent: Color(0xFF31FF26),
+    searchHitForeground: Color(0xFF000000),
+  );
+
+  TerminalTheme get _terminalTheme {
+    final themeMode = ref.watch(themeModeProvider);
+    return themeMode == ThemeMode.dark ? _darkTheme : _lightTheme;
+  }
 
   @override
   void initState() {
@@ -50,10 +101,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _outputSub?.cancel();
-    _terminal?.dispose();
-    _inputCtrl.dispose();
-    _scrollCtrl.dispose();
+    _terminalService?.dispose();
+    _terminalService = null;
     super.dispose();
   }
 
@@ -64,79 +113,100 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     }
   }
 
+  void _setupTerminalService(SshConnection conn) {
+    _terminalService?.dispose();
+    _terminalService = TerminalService(conn.service);
+    _terminalService!.bindTerminal(_terminal);
+    _terminalService!.setOnDisconnect(_onSessionDisconnect);
+  }
+
+  void _onSessionDisconnect() {
+    if (!mounted) return;
+    _reconnectAttempts++;
+    if (_reconnectAttempts <= _maxReconnectAttempts) {
+      final delay = Duration(seconds: (_reconnectAttempts * 2).clamp(2, 30));
+      Future.delayed(delay, () {
+        if (mounted) _connect();
+      });
+    } else {
+      setState(() => _connectionStatus = 'Disconnected. Tap Retry to reconnect.');
+    }
+  }
+
   Future<void> _connect() async {
+    if (_isConnecting) return;
+    _isConnecting = true;
+
     setState(() => _connectionStatus = 'Connecting to server...');
 
     try {
-      // Get or create SSH connection
-      var connState = ref.read(sshConnectionProvider(widget.server.id));
-      if (connState.valueOrNull == null ||
-          !connState.valueOrNull!.connected) {
-        await ref
-            .read(sshConnectionProvider(widget.server.id).notifier)
-            .connect(widget.server);
+      final notifier = ref.read(sshConnectionProvider(widget.server.id).notifier);
+      final connState = ref.read(sshConnectionProvider(widget.server.id));
+      final existingConn = connState.valueOrNull;
+
+      // Only reconnect if there's no active connection
+      if (existingConn == null || !existingConn.connected) {
+        if (existingConn != null) {
+          await notifier.disconnect();
+        }
+        await notifier.connect(widget.server);
       }
 
-      connState = ref.read(sshConnectionProvider(widget.server.id));
-      final conn = connState.valueOrNull;
+      var conn = ref.read(sshConnectionProvider(widget.server.id)).valueOrNull;
       if (conn == null) throw StateError('Failed to connect');
 
       setState(() => _connectionStatus = 'Attaching to session...');
 
-      // Create terminal service and attach to tmux session
-      _terminal = TerminalService(conn.service);
-      _outputSub = _terminal!.output.listen((data) {
-        if (mounted) {
-          setState(() {
-            // Parse terminal output into lines, handling ANSI codes
-            final cleaned = _cleanAnsi(data);
-            final newLines = cleaned.split('\n');
-            _terminalLines.addAll(newLines);
-            // Keep buffer manageable
-            while (_terminalLines.length > 3000) {
-              _terminalLines.removeAt(0);
-            }
-          });
-          _scrollToBottom();
+      _setupTerminalService(conn);
+
+      try {
+        await _terminalService!.attachToSession(
+          widget.session.tmuxSessionName,
+          startCommand: _getStartCommand(),
+          workingDir: widget.session.workingDir,
+        );
+      } catch (e) {
+        // Transport may have died — force reconnect and retry once
+        if (e.toString().contains('Transport') || e.toString().contains('closed')) {
+          await notifier.disconnect();
+          await notifier.connect(widget.server);
+          conn = ref.read(sshConnectionProvider(widget.server.id)).valueOrNull;
+          if (conn == null) throw StateError('Failed to reconnect');
+          _setupTerminalService(conn);
+          await _terminalService!.attachToSession(
+            widget.session.tmuxSessionName,
+            startCommand: _getStartCommand(),
+            workingDir: widget.session.workingDir,
+          );
+        } else {
+          rethrow;
         }
-      });
+      }
 
-      await _terminal!.attachToSession(widget.session.tmuxSessionName);
-
+      _reconnectAttempts = 0;
       setState(() {
         _connected = true;
         _connectionStatus = 'Connected';
       });
     } catch (e) {
       setState(() => _connectionStatus = 'Error: $e');
+    } finally {
+      _isConnecting = false;
     }
   }
 
   Future<void> _reconnectIfNeeded() async {
-    if (_terminal == null || !_terminal!.isActive) {
+    if (_terminalService == null || !_terminalService!.isActive) {
       await _connect();
     }
   }
 
-  String _cleanAnsi(String input) {
-    // Remove ANSI escape sequences
-    return input
-        .replaceAll(RegExp(r'\x1B\[[0-9;]*[a-zA-Z]'), '')
-        .replaceAll(RegExp(r'\x1B\][^\x07]*\x07'), '')
-        .replaceAll(RegExp(r'\x1B[()][AB012]'), '')
-        .replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1F]'), '');
-  }
-
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(
-          _scrollCtrl.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 100),
-          curve: Curves.easeOut,
-        );
-      }
-    });
+  String? _getStartCommand() {
+    final connState = ref.read(sshConnectionProvider(widget.server.id));
+    final conn = connState.valueOrNull;
+    if (conn == null) return null;
+    final adapter = SessionManager.getAdapter(widget.session.cliToolId);
+    return adapter.getStartCommand(workingDir: widget.session.workingDir);
   }
 
   @override
@@ -168,19 +238,15 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.videocam_outlined),
-            tooltip: 'Terminal view',
-            onPressed: _showTerminalView,
+            icon: const Icon(Icons.copy),
+            tooltip: 'Copy output',
+            onPressed: _copyOutput,
           ),
           PopupMenuButton(
             itemBuilder: (ctx) => [
               const PopupMenuItem(
                 value: 'reconnect',
                 child: Text('Reconnect'),
-              ),
-              const PopupMenuItem(
-                value: 'clear',
-                child: Text('Clear Output'),
               ),
               const PopupMenuItem(
                 value: 'kill',
@@ -190,7 +256,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             ],
             onSelected: (value) {
               if (value == 'reconnect') _connect();
-              if (value == 'clear') _clearOutput();
               if (value == 'kill') _killSession();
             },
           ),
@@ -198,13 +263,13 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       ),
       body: Column(
         children: [
-          // Terminal output area
+          // Terminal output area - full screen
           Expanded(child: _buildTerminalOutput()),
-          // Image preview strip
-          if (_pendingImages.isNotEmpty) _buildImageStrip(),
-          // Input area
-          _buildInputArea(),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.small(
+        onPressed: () => _terminal.keyInput(TerminalKey.enter),
+        child: const Icon(Icons.keyboard_return),
       ),
     );
   }
@@ -219,9 +284,13 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             const SizedBox(height: 16),
             Text(_connectionStatus),
             const SizedBox(height: 16),
-            if (_connectionStatus.startsWith('Error'))
+            if (_connectionStatus.startsWith('Error') ||
+                _reconnectAttempts > _maxReconnectAttempts)
               FilledButton(
-                onPressed: _connect,
+                onPressed: () {
+                  _reconnectAttempts = 0;
+                  _connect();
+                },
                 child: const Text('Retry'),
               ),
           ],
@@ -229,289 +298,58 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       );
     }
 
-    return Container(
-      color: const Color(0xFF0D1117),
-      child: _terminalLines.isEmpty
-          ? const Center(
-              child: Text(
-                'Waiting for output...',
-                style: TextStyle(color: Colors.grey),
-              ),
-            )
-          : ListView.builder(
-              controller: _scrollCtrl,
-              padding: const EdgeInsets.all(8),
-              itemCount: _terminalLines.length,
-              itemBuilder: (ctx, index) {
-                final line = _terminalLines[index];
-                return SelectableText(
-                  line,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 13,
-                    color: Color(0xFFE6EDF3),
-                    height: 1.3,
-                  ),
-                );
-              },
-            ),
-    );
-  }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Calculate terminal dimensions based on available space and font size
+        const fontSize = 14.0;
+        const lineHeight = fontSize * 1.2;
+        final cols = (constraints.maxWidth / (fontSize * 0.6)).floor();
+        final rows = (constraints.maxHeight / lineHeight).floor();
 
-  Widget _buildImageStrip() {
-    return Container(
-      height: 80,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _pendingImages.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (ctx, index) {
-          return Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(
-                  File(_pendingImages[index].path),
-                  width: 64,
-                  height: 64,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              Positioned(
-                top: 0,
-                right: 0,
-                child: GestureDetector(
-                  onTap: () => setState(() => _pendingImages.removeAt(index)),
-                  child: Container(
-                    decoration: const BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                    padding: const EdgeInsets.all(2),
-                    child:
-                        const Icon(Icons.close, size: 14, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildInputArea() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.15),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.image_outlined),
-              onPressed: _connected ? _pickImage : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.keyboard_command_key),
-              tooltip: 'Send Ctrl+C',
-              onPressed: _connected ? () => _sendCtrl('c') : null,
-            ),
-            const SizedBox(width: 4),
-            Expanded(
-              child: TextField(
-                controller: _inputCtrl,
-                decoration: InputDecoration(
-                  hintText: _connected ? 'Type a message...' : 'Connecting...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(24),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                ),
-                maxLines: 4,
-                minLines: 1,
-                enabled: _connected,
-                textInputAction: TextInputAction.newline,
-                onSubmitted: (_) => _send(),
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              icon: _sending
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.send),
-              onPressed: (_sending || !_connected) ? null : _send,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final images = await picker.pickMultiImage();
-    if (images.isNotEmpty) {
-      setState(() => _pendingImages.addAll(images));
-    }
-  }
-
-  Future<void> _send() async {
-    final text = _inputCtrl.text.trim();
-    if (text.isEmpty && _pendingImages.isEmpty) return;
-
-    setState(() => _sending = true);
-
-    try {
-      final connState =
-          ref.read(sshConnectionProvider(widget.server.id));
-      final conn = connState.valueOrNull;
-      if (conn == null || !conn.connected) {
-        throw StateError('Not connected to server');
-      }
-
-      final manager = SessionManager(conn.service);
-
-      // Upload images if any
-      List<String>? remotePaths;
-      if (_pendingImages.isNotEmpty) {
-        remotePaths = [];
-        for (final img in _pendingImages) {
-          final path = await manager.uploadImage(File(img.path));
-          remotePaths.add(path);
+        // Resize terminal to match available space
+        if (cols > 0 && rows > 0 &&
+            (cols != _terminal.viewWidth || rows != _terminal.viewHeight)) {
+          _terminal.resize(cols, rows);
+          _terminalService?.resize(cols, rows);
         }
-      }
 
-      // Save user message to local history
-      final userMsg = ChatMessage(
-        id: _uuid.v4(),
-        sessionId: widget.session.id,
-        role: MessageRole.user,
-        content: text,
-        imagePaths: remotePaths,
-      );
-      await ref
-          .read(chatMessagesProvider(widget.session.id).notifier)
-          .addMessage(userMsg);
-
-      // Send to CLI via tmux
-      await manager.sendMessage(widget.session, text,
-          imagePaths: remotePaths);
-
-      _inputCtrl.clear();
-      setState(() {
-        _pendingImages.clear();
-      });
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _sending = false);
-    }
-  }
-
-  Future<void> _sendCtrl(String key) async {
-    try {
-      await _terminal?.sendCtrl(key);
-    } catch (_) {}
-  }
-
-  void _clearOutput() {
-    setState(() => _terminalLines.clear());
-  }
-
-  void _showTerminalView() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        minChildSize: 0.5,
-        maxChildSize: 0.95,
-        expand: false,
-        builder: (ctx, scrollCtrl) {
-          return Container(
-            color: const Color(0xFF0D1117),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      const Text(
-                        'Terminal Output',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.copy, color: Colors.grey),
-                        onPressed: () {
-                          Clipboard.setData(
-                              ClipboardData(text: _terminalLines.join('\n')));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Copied to clipboard')),
-                          );
-                        },
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.grey),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    controller: scrollCtrl,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    itemCount: _terminalLines.length,
-                    itemBuilder: (ctx, index) {
-                      return SelectableText(
-                        _terminalLines[index],
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                          color: Color(0xFFE6EDF3),
-                          height: 1.3,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ],
+        return Container(
+        color: _terminalTheme.background,
+        child: GestureDetector(
+          onTap: () => _terminal.viewHeight,
+          child: TerminalView(
+            _terminal,
+            theme: _terminalTheme,
+            textStyle: TerminalStyle(
+              fontSize: fontSize,
+              fontFamily: 'monospace',
             ),
-          );
-        },
-      ),
+            autofocus: true,
+            deleteDetection: true,
+            keyboardType: TextInputType.text,
+            keyboardAppearance: Brightness.light,
+            backgroundOpacity: 1.0,
+            simulateScroll: false,
+            onKeyEvent: (node, event) {
+              if (event is KeyDownEvent &&
+                  event.logicalKey == LogicalKeyboardKey.enter) {
+                _terminal.keyInput(TerminalKey.enter);
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+          ),
+        ),
+      );
+      },
+    );
+  }
+
+  void _copyOutput() {
+    final text = _terminal.buffer.getText();
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied to clipboard')),
     );
   }
 
@@ -537,7 +375,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     );
 
     if (confirmed == true) {
-      await _terminal?.detach();
+      await _terminalService?.detach();
       await ref
           .read(serverSessionsProvider(widget.server.id).notifier)
           .deleteSession(widget.session.id);

@@ -29,7 +29,7 @@ class SessionManager {
     _sftp = SftpService(_ssh);
   }
 
-  CliAdapter getAdapter(String cliToolId, {String? command}) {
+  static CliAdapter getAdapter(String cliToolId, {String? command}) {
     switch (cliToolId) {
       case 'claude':
         return ClaudeAdapter();
@@ -44,22 +44,32 @@ class SessionManager {
     required ServerConfig server,
     required CliTool cliTool,
     String? workingDir,
+    int? sessionIndex,
   }) async {
     final sessionId = _uuid.v4();
-    final tmuxName = 'acode_${cliTool.id}_$sessionId';
+    final toolPrefix = cliTool.id.length > 1 ? cliTool.id.substring(0, 1) : cliTool.id;
     final adapter = getAdapter(cliTool.id, command: cliTool.command);
     final dir = workingDir ?? server.defaultWorkingDir;
+    final startCmd = adapter.getStartCommand(workingDir: dir);
+
+    // Find an available tmux session name (avoid conflicts with existing sessions)
+    int index = sessionIndex ?? 1;
+    String tmuxName = 'acode_${toolPrefix}$index';
+    while (await _tmux.sessionExists(tmuxName)) {
+      index++;
+      tmuxName = 'acode_${toolPrefix}$index';
+    }
 
     // Create tmux session with the CLI tool
-    final startCmd = adapter.getStartCommand(workingDir: dir);
     await _tmux.createSession(tmuxName, startCmd, workingDir: dir);
 
+    final suffix = index > 1 ? ' #$index' : '';
     final session = Session(
       id: sessionId,
       serverId: server.id,
       cliToolId: cliTool.id,
       tmuxSessionName: tmuxName,
-      title: '${cliTool.name} - ${server.name}',
+      title: '${cliTool.name} - ${server.name}$suffix',
       status: SessionStatus.active,
       workingDir: dir,
     );
@@ -82,16 +92,39 @@ class SessionManager {
         .where((s) => s.name.startsWith('acode_'))
         .toList();
 
+    // Map short prefix back to cliToolId
+    const prefixMap = {
+      'c': 'claude',
+      'o': 'opencode',
+      'a': 'aider',
+      'g': 'generic',
+    };
+
+    // Group by cliToolId to assign sequential numbers
+    final toolCount = <String, int>{};
+
     return acodeSessions.map((info) {
-      final parts = info.name.split('_');
-      final cliId = parts.length > 1 ? parts[1] : 'generic';
+      // Parse name like "acode_c1" -> prefix "c", number "1"
+      final namePart = info.name.substring(6); // strip "acode_"
+      final prefixChar = namePart.replaceAll(RegExp(r'\d'), '');
+      final cliId = prefixMap[prefixChar] ?? prefixChar;
+
+      final toolName = CliTool.defaults().firstWhere(
+        (t) => t.id == cliId,
+        orElse: () => CliTool(id: cliId, name: cliId, command: cliId),
+      ).name;
+
+      final count = (toolCount[cliId] ?? 0) + 1;
+      toolCount[cliId] = count;
+
+      final suffix = count > 1 ? ' #$count' : '';
 
       return Session(
         id: _uuid.v4(),
         serverId: server.id,
         cliToolId: cliId,
         tmuxSessionName: info.name,
-        title: info.name,
+        title: '$toolName - ${server.name}$suffix',
         status: SessionStatus.active,
       );
     }).toList();

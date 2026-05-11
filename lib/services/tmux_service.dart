@@ -1,5 +1,9 @@
 import 'ssh_service.dart';
 
+/// Escapes a string for safe use inside single-quoted shell strings.
+/// Replaces each ' with '\'' (end quote, escaped quote, start quote).
+String _shellEscape(String s) => s.replaceAll("'", r"'\''");
+
 class TmuxSessionInfo {
   final String name;
   final String? attached;
@@ -45,20 +49,21 @@ class TmuxService {
   }
 
   Future<void> createSession(String name, String command, {String? workingDir}) async {
-    final dir = workingDir ?? '~';
+    final dir = _shellEscape(workingDir ?? '~');
+    final escapedName = _shellEscape(name);
+    final escapedCmd = _shellEscape(command);
     await _ssh.exec(
-      "tmux new-session -d -s '$name' -c '$dir' '$command'",
+      "tmux new-session -d -s '$escapedName' -c '$dir' '$escapedCmd'",
     );
   }
 
   Future<void> sendKeys(String sessionName, String input) async {
-    // Escape special characters for tmux
+    // Inside single quotes, only ' and \ need escaping
     final escaped = input
         .replaceAll(r'\', r'\\')
-        .replaceAll("'", r"'\''")
-        .replaceAll('"', r'\"')
-        .replaceAll(r'$', r'\$');
-    await _ssh.exec("tmux send-keys -t '$sessionName' '$escaped' Enter");
+        .replaceAll("'", r"'\''");
+    final escapedName = _shellEscape(sessionName);
+    await _ssh.exec("tmux send-keys -t '$escapedName' '$escaped' Enter");
   }
 
   Future<void> sendRawKeys(String sessionName, String input) async {
@@ -66,20 +71,26 @@ class TmuxService {
     final escaped = input
         .replaceAll(r'\', r'\\')
         .replaceAll("'", r"'\''");
-    await _ssh.exec("tmux send-keys -t '$sessionName' '$escaped'");
+    final escapedName = _shellEscape(sessionName);
+    await _ssh.exec("tmux send-keys -t '$escapedName' '$escaped'");
   }
 
   Future<String> captureOutput(String sessionName) async {
-    return await _ssh.exec("tmux capture-pane -t '$sessionName' -p -S -500");
+    final escapedName = _shellEscape(sessionName);
+    return await _ssh.exec("tmux capture-pane -t '$escapedName' -p -S -500");
   }
 
   Future<bool> sessionExists(String name) async {
-    final result = await _ssh.exec("tmux has-session -t '$name' 2>&1; echo \$?");
-    return !result.contains('1');
+    final escapedName = _shellEscape(name);
+    final result = await _ssh.exec("tmux has-session -t '$escapedName' 2>&1; echo \$?");
+    // Check for exact exit code 0 (not just absence of '1', which would
+    // false-match exit codes like 127)
+    return result.trimRight().endsWith('0');
   }
 
   Future<void> killSession(String name) async {
-    await _ssh.exec("tmux kill-session -t '$name'");
+    final escapedName = _shellEscape(name);
+    await _ssh.exec("tmux kill-session -t '$escapedName'");
   }
 
   Future<void> killAllSessions() async {

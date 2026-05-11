@@ -39,10 +39,18 @@ class ServerSessionsNotifier
     }
 
     final manager = SessionManager(conn.service);
+
+    // Count existing sessions with the same cliToolId for numbering
+    final currentSessions = state.valueOrNull ?? [];
+    final sameToolCount = currentSessions
+        .where((s) => s.cliToolId == cliTool.id)
+        .length;
+
     final session = await manager.createSession(
       server: server,
       cliTool: cliTool,
       workingDir: workingDir,
+      sessionIndex: sameToolCount + 1,
     );
 
     final box = await ref.read(sessionsBoxProvider.future);
