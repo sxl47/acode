@@ -49,11 +49,15 @@ class TmuxService {
   }
 
   Future<void> createSession(String name, String command, {String? workingDir}) async {
-    final dir = _shellEscape(workingDir ?? '~');
+    final dir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
     final escapedName = _shellEscape(name);
     final escapedCmd = _shellEscape(command);
+    // Don't single-quote paths starting with ~ so bash can expand them
+    final cdDir = (dir == '~' || dir.startsWith('~/'))
+        ? dir
+        : "'${_shellEscape(dir)}'";
     await _ssh.exec(
-      "tmux new-session -d -s '$escapedName' -c '$dir' '$escapedCmd'",
+      "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' '$escapedCmd'\"",
     );
   }
 

@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -33,6 +34,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   bool _isConnecting = false;
   int _reconnectAttempts = 0;
   static const int _maxReconnectAttempts = 10;
+
+  bool _altActive = false;
+  bool _ctrlActive = false;
+  late bool _showKeyBar;
 
   static const _darkTheme = TerminalTheme(
     cursor: Color(0xFFAEAFAD),
@@ -94,6 +99,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   @override
   void initState() {
     super.initState();
+    _showKeyBar = Platform.isAndroid || Platform.isIOS;
     WidgetsBinding.instance.addObserver(this);
     _connect();
   }
@@ -144,7 +150,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       final connState = ref.read(sshConnectionProvider(widget.server.id));
       final existingConn = connState.valueOrNull;
 
-      // Only reconnect if there's no active connection
       if (existingConn == null || !existingConn.connected) {
         if (existingConn != null) {
           await notifier.disconnect();
@@ -166,7 +171,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           workingDir: widget.session.workingDir,
         );
       } catch (e) {
-        // Transport may have died — force reconnect and retry once
         if (e.toString().contains('Transport') || e.toString().contains('closed')) {
           await notifier.disconnect();
           await notifier.connect(widget.server);
@@ -212,9 +216,169 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     return adapter.getStartCommand(workingDir: widget.session.workingDir);
   }
 
+  // --- Key sending helpers ---
+
+  void _send(String data) {
+    _terminalService?.sendInput(data);
+  }
+
+  void _sendEsc() {
+    _send('\x1b');
+    _clearModifiers();
+  }
+
+  void _sendTab() {
+    _send('\x09');
+    _clearModifiers();
+  }
+
+  void _sendBackspace() {
+    _send('\x7f');
+    _clearModifiers();
+  }
+
+  void _sendEnter() {
+    _send('\r');
+    _clearModifiers();
+  }
+
+  void _sendUp() {
+    _send('\x1b[A');
+    _clearModifiers();
+  }
+
+  void _sendDown() {
+    _send('\x1b[B');
+    _clearModifiers();
+  }
+
+  void _sendRight() {
+    _send('\x1b[C');
+    _clearModifiers();
+  }
+
+  void _sendLeft() {
+    _send('\x1b[D');
+    _clearModifiers();
+  }
+
+  void _sendHome() {
+    _send('\x1b[H');
+    _clearModifiers();
+  }
+
+  void _sendEnd() {
+    _send('\x1b[F');
+    _clearModifiers();
+  }
+
+  void _toggleAlt() {
+    setState(() {
+      _altActive = !_altActive;
+      if (_altActive) _ctrlActive = false;
+    });
+  }
+
+  void _toggleCtrl() {
+    setState(() {
+      _ctrlActive = !_ctrlActive;
+      if (_ctrlActive) _altActive = false;
+    });
+  }
+
+  void _clearModifiers() {
+    if (_altActive || _ctrlActive) {
+      setState(() {
+        _altActive = false;
+        _ctrlActive = false;
+      });
+    }
+  }
+
+  Future<void> _pasteClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (data?.text != null) {
+      _terminal.paste(data!.text!);
+    }
+  }
+
+  // --- Gesture handlers ---
+
+  Offset? _swipeStart;
+
+  void _onPanStart(DragStartDetails details) {
+    _swipeStart = details.localPosition;
+  }
+
+  void _onPanEnd(DragEndDetails details) {
+    if (_swipeStart == null) return;
+    final velocity = details.velocity.pixelsPerSecond;
+    final dx = velocity.dx.abs();
+    final dy = velocity.dy.abs();
+
+    // Determine if it's a vertical or horizontal swipe
+    if (dy > dx) {
+      // Vertical swipe: scroll
+      if (velocity.dy < -200) {
+        // Swipe up: scroll up (Page Up or mouse wheel up)
+        _send('\x1b[5~'); // Page Up
+      } else if (velocity.dy > 200) {
+        // Swipe down: scroll down (Page Down or mouse wheel down)
+        _send('\x1b[6~'); // Page Down
+      }
+    } else {
+      // Horizontal swipe: move cursor
+      if (velocity.dx < -200) {
+        // Swipe left: cursor left
+        _sendLeft();
+      } else if (velocity.dx > 200) {
+        // Swipe right: cursor right
+        _sendRight();
+      }
+    }
+    _swipeStart = null;
+  }
+
+  void _switchToAdjacentSession(int delta) {
+    final sessionsAsync = ref.read(serverSessionsProvider(widget.server.id));
+    final sessions = sessionsAsync.valueOrNull;
+    if (sessions == null || sessions.length <= 1) return;
+    final currentIndex = sessions.indexWhere((s) => s.id == widget.session.id);
+    if (currentIndex < 0) return;
+    final nextIndex = (currentIndex + delta).clamp(0, sessions.length - 1);
+    if (nextIndex == currentIndex) return;
+    _switchToSession(sessions[nextIndex].id);
+  }
+
+  Map<ShortcutActivator, VoidCallback> _buildSessionShortcuts() {
+    final sessionsAsync = ref.read(serverSessionsProvider(widget.server.id));
+    final sessions = sessionsAsync.valueOrNull;
+    if (sessions == null || sessions.length <= 1) return {};
+    final count = sessions.length.clamp(0, 9);
+    final map = <ShortcutActivator, VoidCallback>{};
+    final digitKeys = [
+      LogicalKeyboardKey.digit1, LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3, LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5, LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7, LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit9,
+    ];
+    for (var i = 0; i < count; i++) {
+      map[SingleActivator(digitKeys[i], alt: true)] =
+          () => _switchToSession(sessions[i].id);
+    }
+    map[SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true)] =
+        () => _switchToAdjacentSession(-1);
+    map[SingleActivator(LogicalKeyboardKey.arrowRight, alt: true)] =
+        () => _switchToAdjacentSession(1);
+    return map;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return CallbackShortcuts(
+      bindings: _buildSessionShortcuts(),
+      child: Scaffold(
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -240,25 +404,35 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.copy),
-            tooltip: 'Copy output',
-            onPressed: _copyOutput,
-          ),
+          _buildSessionTabs(),
           PopupMenuButton(
             itemBuilder: (ctx) => [
               const PopupMenuItem(
-                value: 'reconnect',
-                child: Text('Reconnect'),
+                value: 'copy',
+                child: ListTile(leading: Icon(Icons.copy), title: Text('Copy output'), dense: true),
               ),
               const PopupMenuItem(
+                value: 'reconnect',
+                child: ListTile(leading: Icon(Icons.refresh), title: Text('Reconnect'), dense: true),
+              ),
+              if (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+                PopupMenuItem(
+                  value: 'keys',
+                  child: ListTile(
+                    leading: Icon(_showKeyBar ? Icons.keyboard_hide : Icons.keyboard),
+                    title: Text(_showKeyBar ? 'Hide keys' : 'Show keys'),
+                    dense: true,
+                  ),
+                ),
+              const PopupMenuItem(
                 value: 'kill',
-                child:
-                    Text('Kill Session', style: TextStyle(color: Colors.red)),
+                child: ListTile(leading: Icon(Icons.stop_circle, color: Colors.red), title: Text('Kill Session', style: TextStyle(color: Colors.red)), dense: true),
               ),
             ],
             onSelected: (value) {
+              if (value == 'copy') _copyOutput();
               if (value == 'reconnect') _connect();
+              if (value == 'keys') setState(() => _showKeyBar = !_showKeyBar);
               if (value == 'kill') _killSession();
             },
           ),
@@ -266,14 +440,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       ),
       body: Column(
         children: [
-          // Terminal output area - full screen
           Expanded(child: _buildTerminalOutput()),
+          if (_connected && _showKeyBar) _buildKeyBar(),
         ],
       ),
-      floatingActionButton: FloatingActionButton.small(
-        onPressed: () => _terminal.keyInput(TerminalKey.enter),
-        child: const Icon(Icons.keyboard_return),
-      ),
+    ),
     );
   }
 
@@ -303,48 +474,127 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Calculate terminal dimensions based on available space and font size
         const fontSize = 14.0;
         const lineHeight = fontSize * 1.2;
         final cols = (constraints.maxWidth / (fontSize * 0.6)).floor();
         final rows = (constraints.maxHeight / lineHeight).floor();
 
-        // Resize terminal to match available space
         if (cols > 0 && rows > 0 &&
             (cols != _terminal.viewWidth || rows != _terminal.viewHeight)) {
           _terminal.resize(cols, rows);
           _terminalService?.resize(cols, rows);
         }
 
-        return Container(
-        color: _terminalTheme.background,
-        child: GestureDetector(
-          onTap: () => _terminal.viewHeight,
-          child: TerminalView(
-            _terminal,
-            theme: _terminalTheme,
-            textStyle: TerminalStyle(
-              fontSize: fontSize,
-              fontFamily: 'monospace',
+        return GestureDetector(
+          onPanStart: _onPanStart,
+          onPanEnd: _onPanEnd,
+          child: Container(
+            color: _terminalTheme.background,
+            child: TerminalView(
+              _terminal,
+              theme: _terminalTheme,
+              textStyle: TerminalStyle(
+                fontSize: fontSize,
+                fontFamily: 'monospace',
+              ),
+              autofocus: true,
+              deleteDetection: true,
+              keyboardType: TextInputType.text,
+              keyboardAppearance: Brightness.dark,
+              backgroundOpacity: 1.0,
+              simulateScroll: false,
+              cursorType: TerminalCursorType.underline,
             ),
-            autofocus: true,
-            deleteDetection: true,
-            keyboardType: TextInputType.text,
-            keyboardAppearance: Brightness.light,
-            backgroundOpacity: 1.0,
-            simulateScroll: false,
-            onKeyEvent: (node, event) {
-              if (event is KeyDownEvent &&
-                  event.logicalKey == LogicalKeyboardKey.enter) {
-                _terminal.keyInput(TerminalKey.enter);
-                return KeyEventResult.handled;
-              }
-              return KeyEventResult.ignored;
-            },
           ),
-        ),
-      );
+        );
       },
+    );
+  }
+
+  Widget _buildKeyBar() {
+    final theme = Theme.of(context);
+    final surface = theme.colorScheme.surface;
+    return Container(
+      color: surface,
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Row 1: Esc Alt Home Up End Clipboard Backspace
+            _buildKeyRow([
+              _KeyDef('Esc', _sendEsc),
+              _KeyDef(
+                'Alt',
+                _toggleAlt,
+                active: _altActive,
+              ),
+              _KeyDef('Home', _sendHome),
+              _KeyDef('↑', _sendUp),
+              _KeyDef('End', _sendEnd),
+              _KeyDef('📋', _pasteClipboard),
+              _KeyDef('Bsp', _sendBackspace),
+            ]),
+            // Row 2: Tab Ctrl Left Down Right Voice Enter
+            _buildKeyRow([
+              _KeyDef('Tab', _sendTab),
+              _KeyDef(
+                'Ctrl',
+                _toggleCtrl,
+                active: _ctrlActive,
+              ),
+              _KeyDef('←', _sendLeft),
+              _KeyDef('↓', _sendDown),
+              _KeyDef('→', _sendRight),
+              _KeyDef('🎤', _voiceInput),
+              _KeyDef('Enter', _sendEnter),
+            ]),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKeyRow(List<_KeyDef> keys) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final surfaceVariant = theme.colorScheme.surfaceContainerHighest;
+    final onSurface = theme.colorScheme.onSurface;
+    return Row(
+      children: keys.map((key) {
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(1),
+            child: SizedBox(
+              height: 36,
+              child: TextButton(
+                onPressed: key.onTap,
+                style: TextButton.styleFrom(
+                  backgroundColor: key.active
+                      ? primary
+                      : surfaceVariant,
+                  foregroundColor: key.active
+                      ? theme.colorScheme.onPrimary
+                      : onSurface.withValues(alpha: 0.8),
+                  padding: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  textStyle: const TextStyle(fontSize: 12),
+                ),
+                child: Text(key.label),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Future<void> _voiceInput() async {
+    // TODO: implement speech-to-text
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Voice input not yet implemented')),
     );
   }
 
@@ -353,6 +603,105 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Copied to clipboard')),
+    );
+  }
+
+  void _switchToSession(String sessionId) {
+    if (sessionId == widget.session.id) return;
+    final sessionsAsync = ref.read(serverSessionsProvider(widget.server.id));
+    final sessions = sessionsAsync.valueOrNull;
+    if (sessions == null) return;
+    final target = sessions.firstWhere((s) => s.id == sessionId);
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SessionScreen(session: target, server: widget.server),
+      ),
+    );
+  }
+
+  Widget _buildSessionTabs() {
+    final sessionsAsync = ref.watch(serverSessionsProvider(widget.server.id));
+    return sessionsAsync.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (sessions) {
+        if (sessions.length <= 1) return const SizedBox.shrink();
+        // Few sessions: show inline tabs
+        if (sessions.length <= 5) {
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: sessions.asMap().entries.map((entry) {
+              final index = entry.key;
+              final s = entry.value;
+              final isCurrent = s.id == widget.session.id;
+              final theme = Theme.of(context);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Tooltip(
+                  message: '${s.title} (Alt+${index + 1})',
+                  child: SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: TextButton(
+                      onPressed: () => _switchToSession(s.id),
+                      style: TextButton.styleFrom(
+                        backgroundColor: isCurrent
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.surfaceContainerHighest,
+                        foregroundColor: isCurrent
+                            ? theme.colorScheme.onPrimary
+                            : theme.colorScheme.onSurface,
+                        padding: EdgeInsets.zero,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                      ),
+                      child: Text('${index + 1}'),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          );
+        }
+        // Many sessions: use popup menu
+        final theme = Theme.of(context);
+        return PopupMenuButton<String>(
+          icon: const Icon(Icons.swap_horiz),
+          tooltip: 'Switch session',
+          itemBuilder: (ctx) => sessions.asMap().entries.map((entry) {
+            final index = entry.key;
+            final s = entry.value;
+            final isCurrent = s.id == widget.session.id;
+            return PopupMenuItem(
+              value: s.id,
+              child: Row(
+                children: [
+                  if (isCurrent)
+                    Icon(Icons.check, size: 16, color: theme.colorScheme.primary)
+                  else
+                    const SizedBox(width: 16),
+                  const SizedBox(width: 8),
+                  Text('${index + 1}. ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Expanded(
+                    child: Text(
+                      s.title,
+                      style: TextStyle(
+                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                        color: isCurrent ? theme.colorScheme.primary : null,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+          onSelected: _switchToSession,
+        );
+      },
     );
   }
 
@@ -385,4 +734,12 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       if (mounted) Navigator.pop(context);
     }
   }
+}
+
+class _KeyDef {
+  final String label;
+  final VoidCallback onTap;
+  final bool active;
+
+  const _KeyDef(this.label, this.onTap, {this.active = false});
 }

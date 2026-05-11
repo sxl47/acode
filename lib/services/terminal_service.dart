@@ -45,7 +45,6 @@ class TerminalService {
       }
 
       final escapedName = shellEscape(tmuxSessionName);
-      final dir = shellEscape(workingDir ?? '~');
 
       // Check if tmux session exists using exec (no terminal echo pollution)
       bool sessionExists = false;
@@ -93,8 +92,13 @@ class TerminalService {
       // Send tmux attach (or create+attach) command
       if (!sessionExists && startCommand != null && startCommand.isNotEmpty) {
         final escapedCmd = shellEscape(startCommand);
+        final rawDir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
+        // Don't single-quote paths starting with ~ so bash can expand them
+        final cdDir = (rawDir == '~' || rawDir.startsWith('~/'))
+            ? rawDir
+            : "'${shellEscape(rawDir)}'";
         final cmd =
-            "tmux new-session -d -s '$escapedName' -c '$dir' '$escapedCmd' 2>/dev/null; "
+            "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' '$escapedCmd'\" 2>/dev/null; "
             "tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       } else {

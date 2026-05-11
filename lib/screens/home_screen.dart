@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import '../providers/settings_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/ssh_provider.dart';
@@ -453,6 +454,32 @@ class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
                               ConnectScreen(server: widget.server),
                         ),
                       );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.copy_outlined),
+                    tooltip: 'Copy server',
+                    onPressed: () async {
+                      final src = widget.server;
+                      final copy = ServerConfig(
+                        id: const Uuid().v4(),
+                        name: '${src.name} (copy)',
+                        host: src.host,
+                        port: src.port,
+                        username: src.username,
+                        password: src.password,
+                        privateKeyPath: src.privateKeyPath,
+                        privateKeyContent: src.privateKeyContent,
+                        passphrase: src.passphrase,
+                        defaultWorkingDir: src.defaultWorkingDir,
+                      );
+                      await ref.read(serversProvider.notifier).addServer(copy);
+                      if (context.mounted) {
+                        Navigator.pop(context);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Copied: ${copy.name}')),
+                        );
+                      }
                     },
                   ),
                 ],
