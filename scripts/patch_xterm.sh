@@ -8,6 +8,7 @@
 # Patch 2: RangeError crash in eraseLineToCursor (end == 0 → getWidth(-1))
 # Patch 3: RangeError in eraseLineFromCursor/eraseChars (_cursorX can be -1)
 # Patch 4: Terminal view doesn't auto-scroll on new SSH output (_stickToBottom not reset)
+# Patch 5: scrollBack negative bug — cursor on wrong line after terminal maximize
 
 set -e
 
@@ -70,6 +71,31 @@ if [ -f "$FILE" ]; then
     echo "  [4/4] Patched render.dart (_stickToBottom)"
   else
     echo "  [4/4] render.dart already patched or pattern not found"
+  fi
+fi
+
+# Patch 5: buffer.dart — scrollBack negative bug (cursor on wrong line after maximize)
+FILE="$XTERM_DIR/core/buffer/buffer.dart"
+if [ -f "$FILE" ]; then
+  if grep -q 'scrollBack => height - viewHeight' "$FILE" && ! grep -q 'scrollBack => max(0' "$FILE"; then
+    sed -i 's/int get scrollBack => height - viewHeight/int get scrollBack => max(0, height - viewHeight)/' "$FILE"
+    echo "  [5/6] Patched buffer.dart (scrollBack clamp)"
+  else
+    echo "  [5/6] buffer.dart scrollBack already patched or pattern not found"
+  fi
+fi
+
+# Patch 6: painter.dart — underline and verticalBar cursor Y offset missing offset.dy
+FILE="$XTERM_DIR/ui/painter.dart"
+if [ -f "$FILE" ]; then
+  if grep -q 'Offset(offset.dx, _cellSize.height - 1)' "$FILE"; then
+    sed -i 's/Offset(offset.dx, _cellSize.height - 1)/Offset(offset.dx, offset.dy + _cellSize.height - 1)/' "$FILE"
+    sed -i 's/Offset(offset.dx + _cellSize.width, _cellSize.height - 1)/Offset(offset.dx + _cellSize.width, offset.dy + _cellSize.height - 1)/' "$FILE"
+    sed -i 's/Offset(offset.dx, 0),$/Offset(offset.dx, offset.dy),/' "$FILE"
+    sed -i 's/Offset(offset.dx, _cellSize.height),$/Offset(offset.dx, offset.dy + _cellSize.height),/' "$FILE"
+    echo "  [6/6] Patched painter.dart (cursor Y offset)"
+  else
+    echo "  [6/6] painter.dart already patched or pattern not found"
   fi
 fi
 

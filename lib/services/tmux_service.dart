@@ -51,14 +51,23 @@ class TmuxService {
   Future<void> createSession(String name, String command, {String? workingDir}) async {
     final dir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
     final escapedName = _shellEscape(name);
-    final escapedCmd = _shellEscape(command);
     // Don't single-quote paths starting with ~ so bash can expand them
     final cdDir = (dir == '~' || dir.startsWith('~/'))
         ? dir
         : "'${_shellEscape(dir)}'";
+    // Create empty tmux session — runs the default interactive shell,
+    // which sources .bashrc and makes env vars available.
     await _ssh.exec(
-      "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' '$escapedCmd'\"",
+      "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName'\"",
     );
+    // Send the command via send-keys so it runs through the interactive
+    // shell where .bashrc has been sourced.
+    if (dir == '~' || dir.startsWith('~/')) {
+      // Don't quote ~ paths so bash can expand the tilde
+      await sendKeys(name, "cd $dir && $command");
+    } else {
+      await sendKeys(name, "cd '$dir' && $command");
+    }
   }
 
   Future<void> sendKeys(String sessionName, String input) async {

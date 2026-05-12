@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,7 +38,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
   bool _altActive = false;
   bool _ctrlActive = false;
+  bool _shiftActive = false;
   late bool _showKeyBar;
+  bool _keyboardVisible = false;
+  bool _terminalReady = false;
+  final _terminalViewKey = GlobalKey<TerminalViewState>();
+  final _terminalController = TerminalController();
+  Timer? _selectionTimer;
+  Timer? _debugTimer;
 
   static const _darkTheme = TerminalTheme(
     cursor: Color(0xFFAEAFAD),
@@ -101,12 +109,19 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     super.initState();
     _showKeyBar = Platform.isAndroid || Platform.isIOS;
     WidgetsBinding.instance.addObserver(this);
+    _terminalController.addListener(_onSelectionChanged);
+    _terminal.addListener(_onTerminalChanged);
     _connect();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _selectionTimer?.cancel();
+    _debugTimer?.cancel();
+    _terminal.removeListener(_onTerminalChanged);
+    _terminalController.removeListener(_onSelectionChanged);
+    _terminalController.dispose();
     _terminalService?.dispose();
     _terminalService = null;
     super.dispose();
@@ -124,6 +139,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     _terminalService = TerminalService(conn.service);
     _terminalService!.bindTerminal(_terminal);
     _terminalService!.setOnDisconnect(_onSessionDisconnect);
+    _terminal.onResize = (width, height, _, _) {
+      _terminalService?.resize(width, height);
+    };
   }
 
   void _onSessionDisconnect() {
@@ -164,12 +182,24 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
       _setupTerminalService(conn);
 
+      // Show TerminalView first so layout gives us correct viewport dimensions
+      setState(() => _terminalReady = true);
+
+      // Wait for one frame — TerminalView gets built, laid out,
+      // autoResize sets _terminal.viewWidth/viewHeight to actual widget size.
+      final completer = Completer<void>();
+      WidgetsBinding.instance.addPostFrameCallback((_) => completer.complete());
+      await completer.future;
+      if (!mounted) return;
+
+      // Now _terminal has correct dimensions — open SSH shell with matching PTY size
       try {
         await _terminalService!.attachToSession(
           widget.session.tmuxSessionName,
           startCommand: _getStartCommand(),
           workingDir: widget.session.workingDir,
         );
+        _wrapTerminalOutput();
       } catch (e) {
         if (e.toString().contains('Transport') || e.toString().contains('closed')) {
           await notifier.disconnect();
@@ -182,6 +212,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             startCommand: _getStartCommand(),
             workingDir: widget.session.workingDir,
           );
+          _wrapTerminalOutput();
         } else {
           rethrow;
         }
@@ -191,6 +222,26 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       setState(() {
         _connected = true;
         _connectionStatus = 'Connected';
+      });
+
+      // Debug: log initial cursor state
+      final buf = _terminal.buffer;
+      debugPrint('[CURSOR DEBUG] INITIAL: cursorY=${buf.cursorY} '
+          'absoluteCursorY=${buf.absoluteCursorY} '
+          'scrollBack=${buf.scrollBack} '
+          'viewHeight=${buf.viewHeight} '
+          'height=${buf.height} '
+          'cursorX=${buf.cursorX}');
+
+      // Debug: periodic cursor position logging
+      _debugTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+        final buf = _terminal.buffer;
+        debugPrint('[CURSOR DEBUG] cursorY=${buf.cursorY} '
+            'absoluteCursorY=${buf.absoluteCursorY} '
+            'scrollBack=${buf.scrollBack} '
+            'viewHeight=${buf.viewHeight} '
+            'height=${buf.height} '
+            'cursorX=${buf.cursorX}');
       });
     } catch (e) {
       setState(() => _connectionStatus = 'Error: $e');
@@ -214,6 +265,71 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       command: widget.session.cliToolCommand,
     );
     return adapter.getStartCommand(workingDir: widget.session.workingDir);
+  }
+
+  // --- Ctrl modifier wrapper ---
+
+  void _wrapTerminalOutput() {
+    final original = _terminal.onOutput;
+    if (original == null) return;
+    _terminal.onOutput = (String data) {
+      if (_ctrlActive && data.length == 1) {
+        final c = data.codeUnitAt(0);
+        if (c >= 0x61 && c <= 0x7A) { // a-z
+          original(String.fromCharCode(c - 96));
+          return;
+        }
+        if (c >= 0x41 && c <= 0x5A) { // A-Z
+          original(String.fromCharCode(c - 64));
+          return;
+        }
+      }
+      original(data);
+    };
+  }
+
+  int _lastCursorY = -1;
+
+  void _onTerminalChanged() {
+    final buf = _terminal.buffer;
+    if (buf.cursorY != _lastCursorY) {
+      _lastCursorY = buf.cursorY;
+      debugPrint('[CURSOR CHANGED] cursorY=${buf.cursorY} '
+          'absoluteCursorY=${buf.absoluteCursorY} '
+          'scrollBack=${buf.scrollBack} '
+          'viewHeight=${buf.viewHeight} '
+          'height=${buf.height} '
+          'cursorX=${buf.cursorX}');
+    }
+  }
+
+  // --- Selection / Copy ---
+
+  void _onSelectionChanged() {
+    final selection = _terminalController.selection;
+    if (selection == null || selection.isCollapsed) {
+      return;
+    }
+    _selectionTimer?.cancel();
+    _selectionTimer = Timer(const Duration(milliseconds: 200), () {
+      _copySelection();
+    });
+  }
+
+  void _copySelection() {
+    final selection = _terminalController.selection;
+    if (selection == null || selection.isCollapsed) return;
+    final text = _terminal.buffer.getText(selection);
+    if (text.isNotEmpty) {
+      Clipboard.setData(ClipboardData(text: text));
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Copied'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   // --- Key sending helpers ---
@@ -275,22 +391,47 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   void _toggleAlt() {
     setState(() {
       _altActive = !_altActive;
-      if (_altActive) _ctrlActive = false;
+      if (_altActive) { _ctrlActive = false; _shiftActive = false; }
     });
   }
 
   void _toggleCtrl() {
     setState(() {
       _ctrlActive = !_ctrlActive;
-      if (_ctrlActive) _altActive = false;
+      if (_ctrlActive) { _altActive = false; _shiftActive = false; }
+    });
+  }
+
+  void _toggleShift() {
+    setState(() {
+      _shiftActive = !_shiftActive;
+      if (_shiftActive) { _altActive = false; _ctrlActive = false; }
     });
   }
 
   void _clearModifiers() {
-    if (_altActive || _ctrlActive) {
+    if (_altActive || _ctrlActive || _shiftActive) {
       setState(() {
         _altActive = false;
         _ctrlActive = false;
+        _shiftActive = false;
+      });
+    }
+  }
+
+  void _sendNumber(int n) {
+    _send('$n');
+    _clearModifiers();
+  }
+
+  void _toggleKeyboard() {
+    if (_keyboardVisible) {
+      FocusManager.instance.primaryFocus?.unfocus();
+      setState(() => _keyboardVisible = false);
+    } else {
+      setState(() => _keyboardVisible = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _terminalViewKey.currentState?.requestKeyboard();
       });
     }
   }
@@ -449,7 +590,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   }
 
   Widget _buildTerminalOutput() {
-    if (!_connected) {
+    if (!_terminalReady) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -472,19 +613,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       );
     }
 
-    return LayoutBuilder(
+    const fontSize = 14.0;
+
+    Widget terminal = LayoutBuilder(
       builder: (context, constraints) {
-        const fontSize = 14.0;
-        const lineHeight = fontSize * 1.2;
-        final cols = (constraints.maxWidth / (fontSize * 0.6)).floor();
-        final rows = (constraints.maxHeight / lineHeight).floor();
-
-        if (cols > 0 && rows > 0 &&
-            (cols != _terminal.viewWidth || rows != _terminal.viewHeight)) {
-          _terminal.resize(cols, rows);
-          _terminalService?.resize(cols, rows);
-        }
-
         return GestureDetector(
           onPanStart: _onPanStart,
           onPanEnd: _onPanEnd,
@@ -492,12 +624,15 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             color: _terminalTheme.background,
             child: TerminalView(
               _terminal,
+              key: _terminalViewKey,
+              controller: _terminalController,
               theme: _terminalTheme,
               textStyle: TerminalStyle(
                 fontSize: fontSize,
                 fontFamily: 'monospace',
               ),
               autofocus: true,
+              readOnly: (Platform.isAndroid || Platform.isIOS) ? !_keyboardVisible : false,
               deleteDetection: true,
               keyboardType: TextInputType.text,
               keyboardAppearance: Brightness.dark,
@@ -509,6 +644,47 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         );
       },
     );
+
+    // Overlay a semi-transparent status when not yet connected
+    if (!_connected) {
+      terminal = Stack(
+        children: [
+          terminal,
+          Positioned.fill(
+            child: Container(
+              color: const Color(0x88000000),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Text(
+                      _connectionStatus,
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                    if (_connectionStatus.startsWith('Error') ||
+                        _reconnectAttempts > _maxReconnectAttempts)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: FilledButton(
+                          onPressed: () {
+                            _reconnectAttempts = 0;
+                            _connect();
+                          },
+                          child: const Text('Retry'),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return terminal;
   }
 
   Widget _buildKeyBar() {
@@ -521,32 +697,34 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Row 1: Esc Alt Home Up End Clipboard Backspace
+            // Row 1: Esc 1 2 3 4 5 6
             _buildKeyRow([
               _KeyDef('Esc', _sendEsc),
-              _KeyDef(
-                'Alt',
-                _toggleAlt,
-                active: _altActive,
-              ),
+              _KeyDef('1', () => _sendNumber(1)),
+              _KeyDef('2', () => _sendNumber(2)),
+              _KeyDef('3', () => _sendNumber(3)),
+              _KeyDef('4', () => _sendNumber(4)),
+              _KeyDef('5', () => _sendNumber(5)),
+              _KeyDef('6', () => _sendNumber(6)),
+            ]),
+            // Row 2: Tab Shift Home ↑ End Paste Bsp
+            _buildKeyRow([
+              _KeyDef('Tab', _sendTab),
+              _KeyDef('Shift', _toggleShift, active: _shiftActive),
               _KeyDef('Home', _sendHome),
               _KeyDef('↑', _sendUp),
               _KeyDef('End', _sendEnd),
               _KeyDef('📋', _pasteClipboard),
               _KeyDef('Bsp', _sendBackspace),
             ]),
-            // Row 2: Tab Ctrl Left Down Right Voice Enter
+            // Row 3: Ctrl Alt ← ↓ → Keyboard Enter
             _buildKeyRow([
-              _KeyDef('Tab', _sendTab),
-              _KeyDef(
-                'Ctrl',
-                _toggleCtrl,
-                active: _ctrlActive,
-              ),
+              _KeyDef('Ctrl', _toggleCtrl, active: _ctrlActive),
+              _KeyDef('Alt', _toggleAlt, active: _altActive),
               _KeyDef('←', _sendLeft),
               _KeyDef('↓', _sendDown),
               _KeyDef('→', _sendRight),
-              _KeyDef('🎤', _voiceInput),
+              _KeyDef('⌨', _toggleKeyboard),
               _KeyDef('Enter', _sendEnter),
             ]),
           ],
@@ -588,13 +766,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           ),
         );
       }).toList(),
-    );
-  }
-
-  Future<void> _voiceInput() async {
-    // TODO: implement speech-to-text
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Voice input not yet implemented')),
     );
   }
 

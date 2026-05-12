@@ -89,16 +89,23 @@ class TerminalService {
         _session?.write(utf8.encode(data));
       };
 
-      // Send tmux attach (or create+attach) command
+      // Send tmux attach (or create+attach) command.
+      // Uses send-keys so the command runs in an interactive shell that
+      // sources .bashrc, making environment variables available to the CLI tool.
       if (!sessionExists && startCommand != null && startCommand.isNotEmpty) {
-        final escapedCmd = shellEscape(startCommand);
         final rawDir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
         // Don't single-quote paths starting with ~ so bash can expand them
         final cdDir = (rawDir == '~' || rawDir.startsWith('~/'))
             ? rawDir
             : "'${shellEscape(rawDir)}'";
+        // For send-keys content: ~ paths need no quoting; other paths get
+        // double-quoted so spaces are preserved in the tmux shell.
+        final sendKeysDir = (rawDir == '~' || rawDir.startsWith('~/'))
+            ? rawDir
+            : '"${rawDir.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
         final cmd =
-            "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' '$escapedCmd'\" 2>/dev/null; "
+            "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' 2>/dev/null && "
+            "tmux send-keys -t '$escapedName' 'cd $sendKeysDir && exec $startCommand' Enter\" 2>/dev/null; "
             "tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       } else {
