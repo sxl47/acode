@@ -42,6 +42,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   bool _shiftActive = false;
   late bool _showKeyBar;
   bool _keyboardVisible = false;
+  bool _userToggleKeyboard = false;
   bool _terminalReady = false;
   final _terminalViewKey = GlobalKey<TerminalViewState>();
   final _terminalController = TerminalController();
@@ -146,9 +147,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
-    if (!mounted) return;
+    if (!mounted || _userToggleKeyboard) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || _userToggleKeyboard) return;
       final bottom = MediaQuery.of(context).viewInsets.bottom;
       final keyboardOpen = bottom > 0;
       if (_keyboardVisible != keyboardOpen) {
@@ -568,6 +569,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   }
 
   void _toggleKeyboard() {
+    _userToggleKeyboard = true;
     if (_keyboardVisible) {
       FocusManager.instance.primaryFocus?.unfocus();
       setState(() => _keyboardVisible = false);
@@ -577,6 +579,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         _terminalViewKey.currentState?.requestKeyboard();
       });
     }
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) _userToggleKeyboard = false;
+    });
   }
 
   void _openQuickInput() {
