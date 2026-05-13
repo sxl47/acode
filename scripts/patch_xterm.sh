@@ -99,4 +99,35 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
+# Patch 7: custom_text_edit.dart — prevent IME text duplication (e.g. Baidu
+#   predictive text: "app" + "apple" prediction → was "appapple")
+#   Root cause: updateEditingValue reset editing state to _initEditingState
+#   after each character, breaking the IME's text accumulation. When the IME
+#   later commits a predicted word, the delta was computed from the stale
+#   initial prefix instead of from the last committed text.
+#   Fixed: track _lastCommittedText and compute delta from it, removing the
+#   reset that corrupted the IME's text buffer.
+FILE="$XTERM_DIR/ui/custom_text_edit.dart"
+if [ -f "$FILE" ]; then
+  # Patch 7a: add _lastCommittedText field after _currentEditingState
+  if grep -q "_lastCommittedText" "$FILE"; then
+    echo "  [7/8] custom_text_edit.dart already patched (IME delta tracking)"
+  else
+    # Add field
+    perl -i -pe 's/(late var _currentEditingState = _initEditingState\.copyWith\(\);)/$1\n\n  String _lastCommittedText = _initEditingState.text;/' "$FILE"
+    # Initialize in _openInputConnection
+    perl -i -pe 's/(_connection!\.setEditingState\(_initEditingState\);)/$1\n      _lastCommittedText = _initEditingState.text;/' "$FILE"
+    echo "  [7/8] Added _lastCommittedText field"
+  fi
+
+  # Patch 7b: rewrite updateEditingValue to use _lastCommittedText delta
+  if grep -q "text.startsWith(_lastCommittedText)" "$FILE"; then
+    echo "  [8/8] custom_text_edit.dart already patched (updateEditingValue)"
+  else
+    # Replace the delta computation + reset block
+    perl -i -pe 'BEGIN{undef $/;} s/if \(_currentEditingState\.text\.length < _initEditingState\.text\.length\) \{\n      widget\.onDelete\(\);\n    \} else \{\n      final text = _currentEditingState\.text;\n      final initText = _initEditingState\.text;\n      final textDelta = text\.startsWith\(initText\)\n          \? text\.substring\(initText\.length\)\n          : text;\n\n      widget\.onInsert\(textDelta\);\n    \}\n\n    \/\/ Reset editing state if composing is done\n    if \(_currentEditingState\.composing\.isCollapsed \&\&\n        _currentEditingState\.text != _initEditingState\.text\) \{\n      _connection!\.setEditingState\(_initEditingState\);\n    \}/final text = _currentEditingState.text;\n\n    if (text.length < _lastCommittedText.length) {\n      widget.onDelete();\n      _lastCommittedText = text;\n    } else {\n      final textDelta = text.startsWith(_lastCommittedText)\n          ? text.substring(_lastCommittedText.length)\n          : text;\n      widget.onInsert(textDelta);\n      _lastCommittedText = text;\n    }/gsm' "$FILE"
+    echo "  [8/8] Patched updateEditingValue (delta tracking)"
+  fi
+fi
+
 echo "Done. All xterm patches applied."

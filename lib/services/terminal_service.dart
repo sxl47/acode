@@ -105,11 +105,12 @@ class TerminalService {
             : '"${rawDir.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"';
         final cmd =
             "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' 2>/dev/null && "
+            "tmux set -t '$escapedName' status off 2>/dev/null && "
             "tmux send-keys -t '$escapedName' 'cd $sendKeysDir && exec $startCommand' Enter\" 2>/dev/null; "
-            "tmux attach -t '$escapedName'\n";
+            "tmux set -t '$escapedName' status off 2>/dev/null; tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       } else {
-        final cmd = "tmux attach -t '$escapedName'\n";
+        final cmd = "tmux set -t '$escapedName' status off 2>/dev/null; tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       }
     } finally {
