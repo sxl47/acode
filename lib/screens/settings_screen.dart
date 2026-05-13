@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/cli_tool.dart';
 import '../providers/settings_provider.dart';
+import 'about_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -29,7 +30,10 @@ class SettingsScreen extends ConsumerWidget {
               title: const Text('ACode'),
               subtitle: const Text('Version 1.0.0'),
               trailing: const Icon(Icons.chevron_right),
-              onTap: () {},
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AboutScreen()),
+              ),
             ),
           ),
         ],

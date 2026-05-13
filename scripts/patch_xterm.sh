@@ -9,6 +9,9 @@
 # Patch 3: RangeError in eraseLineFromCursor/eraseChars (_cursorX can be -1)
 # Patch 4: Terminal view doesn't auto-scroll on new SSH output (_stickToBottom not reset)
 # Patch 5: scrollBack negative bug — cursor on wrong line after terminal maximize
+# Patch 6: Underline/verticalBar cursor Y offset missing offset.dy
+# Patch 7: IME text duplication with predictive IMEs (delta tracking, no key filter)
+# Patch 8: Selection painted ON TOP of text (swapped render order)
 
 set -e
 
@@ -113,8 +116,11 @@ if [ -f "$FILE" ]; then
   if grep -q "_lastCommittedText" "$FILE"; then
     echo "  [7/8] custom_text_edit.dart already patched (IME delta tracking)"
   else
-    # Add field
+    # Add field (safe initializer, _initEditingState is set at connection time)
     perl -i -pe 's/(late var _currentEditingState = _initEditingState\.copyWith\(\);)/$1\n\n  String _lastCommittedText = _initEditingState.text;/' "$FILE"
+    # Fix: change initializer from _initEditingState.text to empty string
+    # (widget not available during field init, _lastCommittedText is set in _openInputConnection)
+    perl -i -pe "s/String _lastCommittedText = _initEditingState.text;/String _lastCommittedText = '';/" "$FILE"
     # Initialize in _openInputConnection
     perl -i -pe 's/(_connection!\.setEditingState\(_initEditingState\);)/$1\n      _lastCommittedText = _initEditingState.text;/' "$FILE"
     echo "  [7/8] Added _lastCommittedText field"
@@ -127,6 +133,27 @@ if [ -f "$FILE" ]; then
     # Replace the delta computation + reset block
     perl -i -pe 'BEGIN{undef $/;} s/if \(_currentEditingState\.text\.length < _initEditingState\.text\.length\) \{\n      widget\.onDelete\(\);\n    \} else \{\n      final text = _currentEditingState\.text;\n      final initText = _initEditingState\.text;\n      final textDelta = text\.startsWith\(initText\)\n          \? text\.substring\(initText\.length\)\n          : text;\n\n      widget\.onInsert\(textDelta\);\n    \}\n\n    \/\/ Reset editing state if composing is done\n    if \(_currentEditingState\.composing\.isCollapsed \&\&\n        _currentEditingState\.text != _initEditingState\.text\) \{\n      _connection!\.setEditingState\(_initEditingState\);\n    \}/final text = _currentEditingState.text;\n\n    if (text.length < _lastCommittedText.length) {\n      widget.onDelete();\n      _lastCommittedText = text;\n    } else {\n      final textDelta = text.startsWith(_lastCommittedText)\n          ? text.substring(_lastCommittedText.length)\n          : text;\n      widget.onInsert(textDelta);\n      _lastCommittedText = text;\n    }/gsm' "$FILE"
     echo "  [8/8] Patched updateEditingValue (delta tracking)"
+  fi
+fi
+
+# Patch 8: render.dart — paint selection BEFORE text lines so text is readable
+#   Original order: paintLine (bg+fg) → cursor → selection → highlights
+#   The selection rectangle was painted ON TOP of rendered text, completely
+#   obscuring it with a solid gray block.
+#   Fixed: paint selection BEFORE paintLine, then text renders on top. For
+#   cells with default background the selection highlight shows through; for
+#   cells with explicit background the cell bg paints over it — both cases
+#   leave the text character clearly visible on top.
+FILE="$XTERM_DIR/ui/render.dart"
+if [ -f "$FILE" ]; then
+  if grep -q "Paint selection highlight first" "$FILE"; then
+    echo "  [9/9] render.dart already patched (selection render order)"
+  else
+    # Add selection painting before the line loop, remove the one after
+    perl -i -pe 'BEGIN{undef $/;} s/(final effectLastLine = lastLine\.clamp\(0, lines\.length - 1\);)/$1\n\n    if (_controller.selection != null) {\n      _paintSelection(\n        canvas,\n        _controller.selection!,\n        effectFirstLine,\n        effectLastLine,\n      );\n    }/g' "$FILE"
+    # Remove the duplicate selection paint after the loop
+    perl -i -pe 'BEGIN{undef $/;} s/\n    if \(_controller\.selection != null\) \{\n      _paintSelection\(\n        canvas,\n        _controller\.selection!,\n        effectFirstLine,\n        effectLastLine,\n      \);\n    \}//g' "$FILE"
+    echo "  [9/9] Patched render.dart (selection render order)"
   fi
 fi
 

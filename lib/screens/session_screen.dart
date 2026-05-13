@@ -11,6 +11,7 @@ import '../services/terminal_service.dart';
 import '../providers/ssh_provider.dart';
 import '../providers/session_provider.dart';
 import '../providers/settings_provider.dart';
+import 'quick_input_page.dart';
 
 class SessionScreen extends ConsumerStatefulWidget {
   final Session session;
@@ -47,9 +48,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   Timer? _selectionTimer;
   Timer? _debugTimer;
 
+  // Selection handle state
+  bool _selectionActive = false;
+  Offset? _startHandleOffset;
+  Offset? _endHandleOffset;
+  bool _isDraggingStart = false;
+  bool _isDraggingEnd = false;
+
+
   static const _darkTheme = TerminalTheme(
     cursor: Color(0xFFAEAFAD),
-    selection: Color(0xFFAEAFAD),
+    selection: Color(0xFF2A3E5C),
     foreground: Color(0xFFCCCCCC),
     background: Color(0xFF0D1117),
     black: Color(0xFF000000),
@@ -75,7 +84,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
   static const _lightTheme = TerminalTheme(
     cursor: Color(0xFF4D4D4D),
-    selection: Color(0xFFBDBDBD),
+    selection: Color(0xFFC5D9F1),
     foreground: Color(0xFF333333),
     background: Color(0xFFFFFFFF),
     black: Color(0xFF000000),
@@ -132,6 +141,20 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     if (state == AppLifecycleState.resumed) {
       _reconnectIfNeeded();
     }
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final bottom = MediaQuery.of(context).viewInsets.bottom;
+      final keyboardOpen = bottom > 0;
+      if (_keyboardVisible != keyboardOpen) {
+        setState(() => _keyboardVisible = keyboardOpen);
+      }
+    });
   }
 
   void _setupTerminalService(SshConnection conn) {
@@ -308,12 +331,24 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   void _onSelectionChanged() {
     final selection = _terminalController.selection;
     if (selection == null || selection.isCollapsed) {
+      if (_selectionActive) {
+        setState(() {
+          _selectionActive = false;
+          _startHandleOffset = null;
+          _endHandleOffset = null;
+        });
+      }
       return;
     }
     _selectionTimer?.cancel();
-    _selectionTimer = Timer(const Duration(milliseconds: 200), () {
+    _selectionTimer = Timer(const Duration(milliseconds: 1500), () {
       _copySelection();
     });
+    if (!_isDraggingStart && !_isDraggingEnd) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _updateHandlePositions();
+      });
+    }
   }
 
   void _copySelection() {
@@ -322,14 +357,122 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final text = _terminal.buffer.getText(selection);
     if (text.isNotEmpty) {
       Clipboard.setData(ClipboardData(text: text));
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Copied'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      ref.read(clipboardHistoryProvider.notifier).add(text);
     }
+  }
+
+  // --- Selection handles ---
+
+  void _updateHandlePositions() {
+    final selection = _terminalController.selection;
+    if (selection == null || selection.isCollapsed) return;
+    final renderState = _terminalViewKey.currentState;
+    if (renderState == null) return;
+    final rt = renderState.renderTerminal;
+    final cellSize = rt.cellSize;
+
+    final startPixel = rt.getOffset(selection.begin);
+    final endPixel = rt.getOffset(selection.end);
+
+    setState(() {
+      _startHandleOffset = Offset(startPixel.dx, startPixel.dy);
+      _endHandleOffset = Offset(
+        endPixel.dx + cellSize.width,
+        endPixel.dy + cellSize.height,
+      );
+      _selectionActive = true;
+    });
+  }
+
+  void _onStartHandleDrag(DragUpdateDetails details) {
+    _isDraggingStart = true;
+    final renderState = _terminalViewKey.currentState;
+    if (renderState == null) return;
+    final rt = renderState.renderTerminal;
+
+    if (_startHandleOffset == null || _endHandleOffset == null) return;
+    final newPos = _startHandleOffset! + details.delta;
+    // Clamp to render bounds
+    final clamped = Offset(
+      newPos.dx.clamp(0, rt.cellSize.width * _terminal.viewWidth),
+      newPos.dy.clamp(0, rt.cellSize.height * _terminal.buffer.lines.length),
+    );
+    _startHandleOffset = clamped;
+    rt.selectCharacters(clamped, _endHandleOffset!);
+  }
+
+  void _onStartHandleDragEnd(_) {
+    _isDraggingStart = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHandlePositions());
+  }
+
+  void _onEndHandleDrag(DragUpdateDetails details) {
+    _isDraggingEnd = true;
+    final renderState = _terminalViewKey.currentState;
+    if (renderState == null) return;
+    final rt = renderState.renderTerminal;
+
+    if (_startHandleOffset == null || _endHandleOffset == null) return;
+    final newPos = _endHandleOffset! + details.delta;
+    final clamped = Offset(
+      newPos.dx.clamp(0, rt.cellSize.width * _terminal.viewWidth),
+      newPos.dy.clamp(0, rt.cellSize.height * _terminal.buffer.lines.length),
+    );
+    _endHandleOffset = clamped;
+    rt.selectCharacters(_startHandleOffset!, clamped);
+  }
+
+  void _onEndHandleDragEnd(_) {
+    _isDraggingEnd = false;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHandlePositions());
+  }
+
+  List<Widget> _buildSelectionHandles() {
+    if (!_selectionActive ||
+        _startHandleOffset == null ||
+        _endHandleOffset == null) {
+      return [];
+    }
+
+    const handleSize = 20.0;
+    final purple = const Color(0xFF7C3AED);
+
+    return [
+      // Start handle
+      Positioned(
+        left: _startHandleOffset!.dx - handleSize / 2,
+        top: _startHandleOffset!.dy - handleSize,
+        width: handleSize,
+        height: handleSize,
+        child: GestureDetector(
+          onPanUpdate: _onStartHandleDrag,
+          onPanEnd: _onStartHandleDragEnd,
+          child: CustomPaint(
+            painter: _HandlePainter(
+              color: purple,
+              isStart: true,
+            ),
+          ),
+        ),
+      ),
+      // End handle
+      Positioned(
+        left: _endHandleOffset!.dx - handleSize / 2,
+        top: _endHandleOffset!.dy,
+        width: handleSize,
+        height: handleSize,
+        child: GestureDetector(
+          onPanUpdate: _onEndHandleDrag,
+          onPanEnd: _onEndHandleDragEnd,
+          child: CustomPaint(
+            painter: _HandlePainter(
+              color: purple,
+              isStart: false,
+            ),
+          ),
+        ),
+      ),
+    ];
   }
 
   // --- Key sending helpers ---
@@ -436,11 +579,15 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     }
   }
 
-  Future<void> _pasteClipboard() async {
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    if (data?.text != null) {
-      _terminal.paste(data!.text!);
-    }
+  void _openQuickInput() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => QuickInputPage(
+          onSend: (text) => _terminal.paste(text),
+        ),
+      ),
+    );
   }
 
   // --- Gesture handlers ---
@@ -684,6 +831,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       );
     }
 
+    // Overlay selection handles on top of terminal
+    final handles = _buildSelectionHandles();
+    if (_selectionActive && handles.isNotEmpty) {
+      terminal = Stack(
+        children: [
+          terminal,
+          ...handles,
+        ],
+      );
+    }
+
     return terminal;
   }
 
@@ -714,7 +872,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
               _KeyDef('Home', _sendHome),
               _KeyDef('↑', _sendUp),
               _KeyDef('End', _sendEnd),
-              _KeyDef('📋', _pasteClipboard),
+              _KeyDef('📋', _openQuickInput),
               _KeyDef('Bsp', _sendBackspace),
             ]),
             // Row 3: Ctrl Alt ← ↓ → Keyboard Enter
@@ -772,6 +930,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   void _copyOutput() {
     final text = _terminal.buffer.getText();
     Clipboard.setData(ClipboardData(text: text));
+    ref.read(clipboardHistoryProvider.notifier).add(text);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Copied to clipboard')),
     );
@@ -913,4 +1072,42 @@ class _KeyDef {
   final bool active;
 
   const _KeyDef(this.label, this.onTap, {this.active = false});
+}
+
+class _HandlePainter extends CustomPainter {
+  final Color color;
+  final bool isStart;
+
+  const _HandlePainter({required this.color, required this.isStart});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, isStart ? size.height : 0);
+    final dotPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 2.0
+      ..style = PaintingStyle.stroke;
+
+    // Draw vertical line from center to edge
+    if (isStart) {
+      canvas.drawLine(center, Offset(size.width / 2, size.height), linePaint);
+    } else {
+      canvas.drawLine(Offset(size.width / 2, 0), center, linePaint);
+    }
+
+    // Draw dot at the handle end
+    canvas.drawCircle(center, 5, dotPaint);
+    // Draw white border
+    dotPaint.color = Colors.white;
+    dotPaint.style = PaintingStyle.stroke;
+    dotPaint.strokeWidth = 1.5;
+    canvas.drawCircle(center, 5, dotPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _HandlePainter oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.isStart != isStart;
 }

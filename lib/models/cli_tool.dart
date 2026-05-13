@@ -20,6 +20,13 @@ class CliTool {
   static List<CliTool> defaults() {
     return [
       CliTool(
+        id: 'generic',
+        name: 'Shell',
+        command: '',
+        description: 'Plain shell session',
+        icon: 'terminal',
+      ),
+      CliTool(
         id: 'claude',
         name: 'Claude Code',
         command: 'claude',
@@ -40,13 +47,6 @@ class CliTool {
         command: 'aider',
         description: 'AI pair programming in your terminal',
         icon: 'pair_programming',
-      ),
-      CliTool(
-        id: 'generic',
-        name: 'Shell',
-        command: '',
-        description: 'Plain shell session',
-        icon: 'terminal',
       ),
     ];
   }
