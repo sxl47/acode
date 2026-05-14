@@ -54,10 +54,10 @@ class SessionManager {
 
     // Find an available tmux session name (avoid conflicts with existing sessions)
     int index = sessionIndex ?? 1;
-    String tmuxName = 'acode_${toolPrefix}$index';
+    String tmuxName = 'acode_$toolPrefix$index';
     while (await _tmux.sessionExists(tmuxName)) {
       index++;
-      tmuxName = 'acode_${toolPrefix}$index';
+      tmuxName = 'acode_$toolPrefix$index';
     }
 
     // Create tmux session with the CLI tool
@@ -87,19 +87,22 @@ class SessionManager {
     }
   }
 
-  Future<List<Session>> discoverRemoteSessions(ServerConfig server) async {
+  Future<List<Session>> discoverRemoteSessions(
+    ServerConfig server, {
+    List<CliTool> knownTools = const [],
+  }) async {
     final sessions = await _tmux.listSessions();
     final acodeSessions = sessions
         .where((s) => s.name.startsWith('acode_'))
         .toList();
 
-    // Map short prefix back to cliToolId
-    const prefixMap = {
-      'c': 'claude',
-      'o': 'opencode',
-      'a': 'aider',
-      'g': 'generic',
-    };
+    // Build prefix→cliToolId map from known tools
+    final prefixMap = <String, String>{};
+    for (final tool in knownTools) {
+      final prefix = tool.id.length > 1 ? tool.id.substring(0, 1) : tool.id;
+      // Don't overwrite an existing mapping (first wins)
+      prefixMap.putIfAbsent(prefix, () => tool.id);
+    }
 
     // Group by cliToolId to assign sequential numbers
     final toolCount = <String, int>{};
@@ -110,10 +113,16 @@ class SessionManager {
       final prefixChar = namePart.replaceAll(RegExp(r'\d'), '');
       final cliId = prefixMap[prefixChar] ?? prefixChar;
 
-      final toolName = CliTool.defaults().firstWhere(
-        (t) => t.id == cliId,
-        orElse: () => CliTool(id: cliId, name: cliId, command: cliId),
-      ).name;
+      // Look up name from known tools or fall back to ID
+      final known = knownTools.where((t) => t.id == cliId);
+      final toolName = known.isNotEmpty
+          ? known.first.name
+          : CliTool.defaults()
+              .firstWhere(
+                (t) => t.id == cliId,
+                orElse: () => CliTool(id: cliId, name: cliId, command: cliId),
+              )
+              .name;
 
       final count = (toolCount[cliId] ?? 0) + 1;
       toolCount[cliId] = count;

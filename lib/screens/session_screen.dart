@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -225,6 +226,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           startCommand: _getStartCommand(),
           workingDir: widget.session.workingDir,
         );
+        if (!mounted) return;
         _wrapTerminalOutput();
         // Exit alternate screen so xterm scrollback + scrollbar work
         _terminal.write('\x1b[?1049l');
@@ -233,6 +235,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             e.toString().contains('closed')) {
           await notifier.disconnect();
           await notifier.connect(widget.server);
+          if (!mounted) return;
           conn = ref.read(sshConnectionProvider(widget.server.id)).valueOrNull;
           if (conn == null) throw StateError('Failed to reconnect');
           _setupTerminalService(conn);
@@ -241,6 +244,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             startCommand: _getStartCommand(),
             workingDir: widget.session.workingDir,
           );
+          if (!mounted) return;
           _wrapTerminalOutput();
           _terminal.write('\x1b[?1049l');
         } else {
@@ -248,6 +252,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         }
       }
 
+      if (!mounted) return;
       _reconnectAttempts = 0;
       setState(() {
         _connected = true;
@@ -497,13 +502,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     _handleScrollDelta(-event.delta.dy);
   }
 
-  void _onPointerSignal(dynamic event) {
-    // PointerScrollEvent has .scrollDelta (Offset)
-    if (event is Offset) return; // not a scroll event
-    try {
-      final delta = (event.scrollDelta as Offset).dy;
-      _handleScrollDelta(delta);
-    } catch (_) {}
+  void _onPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScrollEvent) {
+      _handleScrollDelta(event.scrollDelta.dy);
+    }
   }
 
   void _handleScrollDelta(double delta) {

@@ -3,8 +3,7 @@ import '../cli_adapter.dart';
 class GenericAdapter extends CliAdapter {
   final String _command;
 
-  GenericAdapter({String command = '', String? toolName})
-      : _command = command;
+  GenericAdapter({this._command = ''});
 
   @override
   String get id => 'generic';

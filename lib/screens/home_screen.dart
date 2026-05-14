@@ -354,7 +354,7 @@ class _SessionTile extends ConsumerWidget {
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         leading: CircleAvatar(
           radius: 16,
-          backgroundColor: statusColor.withOpacity(0.2),
+          backgroundColor: statusColor.withValues(alpha: 0.2),
           child: Icon(Icons.terminal, size: 16, color: statusColor),
         ),
         title: Text(session.title, style: const TextStyle(fontSize: 14)),
@@ -581,7 +581,7 @@ class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
               color: Theme.of(context)
                   .colorScheme
                   .surfaceContainerHighest
-                  .withOpacity(0.3),
+                  .withValues(alpha: 0.3),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Column(
@@ -674,21 +674,25 @@ class _ServerDetailSheetState extends ConsumerState<_ServerDetailSheet> {
             workingDir: workDir,
           );
 
-      if (mounted) {
+      if (context.mounted) {
         Navigator.pop(context);
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                SessionScreen(session: session, server: widget.server),
-          ),
-        );
+        if (context.mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  SessionScreen(session: session, server: widget.server),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: $e')),
-        );
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed: $e')),
+          );
+        }
       }
     } finally {
       if (mounted) setState(() => _connecting = false);

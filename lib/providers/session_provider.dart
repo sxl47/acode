@@ -6,6 +6,7 @@ import '../models/server_config.dart';
 import '../models/cli_tool.dart';
 import '../services/session_manager.dart';
 import 'ssh_provider.dart';
+import 'settings_provider.dart';
 
 final sessionsBoxProvider = FutureProvider<Box<Session>>((ref) async {
   return await Hive.openBox<Session>('sessions');
@@ -85,11 +86,19 @@ class ServerSessionsNotifier
     if (conn == null || !conn.connected) return;
 
     final manager = SessionManager(conn.service);
-    final remoteSessions = await manager.discoverRemoteSessions(server);
+    final toolsBox = await ref.read(cliToolsBoxProvider.future);
+    final knownTools = toolsBox.values.toList();
+    final remoteSessions =
+        await manager.discoverRemoteSessions(server, knownTools: knownTools);
 
     final box = await ref.read(sessionsBoxProvider.future);
+    // Deduplicate by tmuxSessionName, not by random UUID
+    final existingTmuxNames = box.values
+        .where((s) => s.serverId == server.id)
+        .map((s) => s.tmuxSessionName)
+        .toSet();
     for (final session in remoteSessions) {
-      if (!box.containsKey(session.id)) {
+      if (!existingTmuxNames.contains(session.tmuxSessionName)) {
         await box.put(session.id, session);
       }
     }

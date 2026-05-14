@@ -37,6 +37,11 @@ class SshConnectionNotifier extends FamilyAsyncNotifier<SshConnection?, String> 
   }
 
   Future<SshConnection> connect(ServerConfig server) async {
+    // Disconnect existing connection first to avoid leaking SSH sockets
+    final existing = state.valueOrNull;
+    if (existing != null) {
+      await existing.service.disconnect();
+    }
     state = const AsyncLoading();
     final service = SshService();
     try {

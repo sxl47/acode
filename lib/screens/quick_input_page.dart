@@ -19,12 +19,13 @@ class QuickInputPage extends ConsumerStatefulWidget {
 class _QuickInputPageState extends ConsumerState<QuickInputPage>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
-  List<CommandGroup> _groups = [];
+  int _lastTabLength = 1;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 1, vsync: this);
+    _tabController.addListener(() => setState(() {}));
   }
 
   @override
@@ -34,17 +35,21 @@ class _QuickInputPageState extends ConsumerState<QuickInputPage>
   }
 
   void _onDataLoaded(List<CommandGroup> groups) {
-    if (groups.length != _groups.length) {
-      _groups = groups;
+    final newLength = 1 + groups.length;
+    if (newLength != _lastTabLength) {
+      _lastTabLength = newLength;
       final index = _tabController.index;
-      _tabController.dispose();
-      _tabController = TabController(
-        length: 1 + groups.length,
-        vsync: this,
-        initialIndex: index.clamp(0, 1 + groups.length - 1),
-      );
-    } else {
-      _groups = groups;
+      // Defer controller rebuild to avoid side effects during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _tabController.dispose();
+        _tabController = TabController(
+          length: newLength,
+          vsync: this,
+          initialIndex: index.clamp(0, newLength - 1),
+        );
+        _tabController.addListener(() => setState(() {}));
+      });
     }
   }
 
