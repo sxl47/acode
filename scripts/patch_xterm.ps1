@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Find xterm package — first try .dart_tool/package_config.json (reliable on CI),
+# Find xterm package - first try .dart_tool/package_config.json (reliable on CI),
 # then fall back to searching the pub cache directly.
 $srcDir = $null
 $pkgConfig = ".dart_tool\package_config.json"
@@ -53,14 +53,14 @@ function Patch-File {
   }
 }
 
-# Patch 1a: terminal_view.dart — Enter key for any TextInputAction
+# Patch 1a: terminal_view.dart - Enter key for any TextInputAction
 Patch-File `
   -Path "$srcDir\terminal_view.dart" `
   -Pattern "action == TextInputAction\.done" `
   -Replacement "true" `
   -Description "[1/4] Patched terminal_view.dart (Enter key)"
 
-# Patch 1b: custom_text_edit.dart — disable secure IME triggers
+# Patch 1b: custom_text_edit.dart - disable secure IME triggers
 $imeFile = "$srcDir\ui\custom_text_edit.dart"
 if (Test-Path $imeFile) {
   $content = Get-Content $imeFile -Raw
@@ -72,7 +72,7 @@ if (Test-Path $imeFile) {
   Write-Host "  [1/4] Patched custom_text_edit.dart (IME settings)"
 }
 
-# Patch 2: line.dart — eraseRange end==0 guard
+# Patch 2: line.dart - eraseRange end==0 guard
 $lineFile = "$srcDir\core\buffer\line.dart"
 if (Test-Path $lineFile) {
   $content = Get-Content $lineFile -Raw
@@ -85,7 +85,7 @@ if (Test-Path $lineFile) {
   }
 }
 
-# Patch 3: buffer.dart — use cursorX getter instead of _cursorX
+# Patch 3: buffer.dart - use cursorX getter instead of _cursorX
 $bufFile = "$srcDir\core\buffer\buffer.dart"
 if (Test-Path $bufFile) {
   $content = Get-Content $bufFile -Raw
@@ -102,7 +102,7 @@ if (Test-Path $bufFile) {
   Write-Host "  [3/4] Patched buffer.dart (cursorX getter)"
 }
 
-# Patch 4: render.dart — reset _stickToBottom on terminal change
+# Patch 4: render.dart - reset _stickToBottom on terminal change
 $renderFile = "$srcDir\ui\render.dart"
 if (Test-Path $renderFile) {
   $content = Get-Content $renderFile -Raw
@@ -115,7 +115,7 @@ if (Test-Path $renderFile) {
   }
 }
 
-# Patch 5: buffer.dart — scrollBack negative bug
+# Patch 5: buffer.dart - scrollBack negative bug
 $bufFile2 = "$srcDir\core\buffer\buffer.dart"
 if (Test-Path $bufFile2) {
   $content = Get-Content $bufFile2 -Raw
@@ -128,7 +128,7 @@ if (Test-Path $bufFile2) {
   }
 }
 
-# Patch 6: painter.dart — underline/verticalBar cursor Y offset
+# Patch 6: painter.dart - underline/verticalBar cursor Y offset
 $paintFile = "$srcDir\ui\painter.dart"
 if (Test-Path $paintFile) {
   $content = Get-Content $paintFile -Raw
@@ -144,7 +144,7 @@ if (Test-Path $paintFile) {
   }
 }
 
-# Patch 7: custom_text_edit.dart — IME text duplication (Baidu predictive text)
+# Patch 7: custom_text_edit.dart - IME text duplication (Baidu predictive text)
 $customFile = "$srcDir\ui\custom_text_edit.dart"
 if (Test-Path $customFile) {
   $content = Get-Content $customFile -Raw
@@ -176,7 +176,7 @@ if (Test-Path $customFile) {
   }
 }
 
-# Patch 8: render.dart — selection painted ON TOP of text
+# Patch 8: render.dart - selection painted ON TOP of text
 $renderFile2 = "$srcDir\ui\render.dart"
 if (Test-Path $renderFile2) {
   $content = Get-Content $renderFile2 -Raw
@@ -199,7 +199,7 @@ if (Test-Path $renderFile2) {
 
 Write-Host "Done. All xterm patches applied."
 
-# Final verification — confirm key patches took effect
+# Final verification - confirm key patches took effect
 $termFile = "$srcDir\terminal_view.dart"
 if (Test-Path $termFile) {
   $content = Get-Content $termFile -Raw
@@ -208,4 +208,4 @@ if (Test-Path $termFile) {
     exit 1
   }
 }
-Write-Host "Verification passed — all patches confirmed."
+Write-Host "Verification passed - all patches confirmed."

@@ -5,17 +5,17 @@
 # Patch 1: Enter key broken with secure IME on Android
 #   - terminal_view.dart: performAction triggers Enter for any TextInputAction
 #   - custom_text_edit.dart: autocorrect/enableSuggestions/enableIMEPersonalizedLearning all true
-# Patch 2: RangeError crash in eraseLineToCursor (end == 0 → getWidth(-1))
+# Patch 2: RangeError crash in eraseLineToCursor (end == 0 -> getWidth(-1))
 # Patch 3: RangeError in eraseLineFromCursor/eraseChars (_cursorX can be -1)
 # Patch 4: Terminal view doesn't auto-scroll on new SSH output (_stickToBottom not reset)
-# Patch 5: scrollBack negative bug — cursor on wrong line after terminal maximize
+# Patch 5: scrollBack negative bug - cursor on wrong line after terminal maximize
 # Patch 6: Underline/verticalBar cursor Y offset missing offset.dy
 # Patch 7: IME text duplication with predictive IMEs (delta tracking, no key filter)
 # Patch 8: Selection painted ON TOP of text (swapped render order)
 
 set -e
 
-# Find xterm package — first try .dart_tool/package_config.json (reliable on CI),
+# Find xterm package - first try .dart_tool/package_config.json (reliable on CI),
 # then fall back to searching the pub cache directly.
 XTERM_DIR=""
 if [ -f .dart_tool/package_config.json ]; then
@@ -43,7 +43,7 @@ fi
 
 echo "Patching xterm at: $XTERM_DIR"
 
-# Patch 1a: terminal_view.dart — Enter key for any TextInputAction
+# Patch 1a: terminal_view.dart - Enter key for any TextInputAction
 FILE="$XTERM_DIR/terminal_view.dart"
 if grep -q "action == TextInputAction.done" "$FILE" 2>/dev/null; then
   sed -i 's/action == TextInputAction\.done/true/' "$FILE"
@@ -54,7 +54,7 @@ else
   echo "  [1/4] terminal_view.dart pattern not found, skipping"
 fi
 
-# Patch 1b: custom_text_edit.dart — disable secure IME triggers
+# Patch 1b: custom_text_edit.dart - disable secure IME triggers
 FILE="$XTERM_DIR/ui/custom_text_edit.dart"
 if [ -f "$FILE" ]; then
   sed -i 's/autocorrect: false/autocorrect: true/' "$FILE"
@@ -63,7 +63,7 @@ if [ -f "$FILE" ]; then
   echo "  [1/4] Patched custom_text_edit.dart (IME settings)"
 fi
 
-# Patch 2: line.dart — eraseRange end==0 guard
+# Patch 2: line.dart - eraseRange end==0 guard
 FILE="$XTERM_DIR/core/buffer/line.dart"
 if [ -f "$FILE" ]; then
   if grep -q 'end < _length && getWidth(end - 1)' "$FILE" && ! grep -q 'end > 0 && end < _length' "$FILE"; then
@@ -74,17 +74,17 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
-# Patch 3: buffer.dart — use cursorX getter instead of _cursorX in erase methods
+# Patch 3: buffer.dart - use cursorX getter instead of _cursorX in erase methods
 FILE="$XTERM_DIR/core/buffer/buffer.dart"
 if [ -f "$FILE" ]; then
-  # eraseLineFromCursor: currentLine.eraseRange(_cursorX, ...) → eraseRange(cursorX, ...)
+  # eraseLineFromCursor: currentLine.eraseRange(_cursorX, ...) -> eraseRange(cursorX, ...)
   sed -i '/eraseLineFromCursor/,/^  }/ s/eraseRange(_cursorX,/eraseRange(cursorX,/' "$FILE"
-  # eraseChars: final start = _cursorX → final start = cursorX
+  # eraseChars: final start = _cursorX -> final start = cursorX
   sed -i '/eraseChars/,/^  }/ s/final start = _cursorX/final start = cursorX/' "$FILE"
   echo "  [3/4] Patched buffer.dart (cursorX getter)"
 fi
 
-# Patch 4: render.dart — reset _stickToBottom on terminal change
+# Patch 4: render.dart - reset _stickToBottom on terminal change
 FILE="$XTERM_DIR/ui/render.dart"
 if [ -f "$FILE" ]; then
   if grep -q 'void _onTerminalChange' "$FILE" && ! grep -A2 '_onTerminalChange' "$FILE" | grep -q '_stickToBottom = true'; then
@@ -95,7 +95,7 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
-# Patch 5: buffer.dart — scrollBack negative bug (cursor on wrong line after maximize)
+# Patch 5: buffer.dart - scrollBack negative bug (cursor on wrong line after maximize)
 FILE="$XTERM_DIR/core/buffer/buffer.dart"
 if [ -f "$FILE" ]; then
   if grep -q 'scrollBack => height - viewHeight' "$FILE" && ! grep -q 'scrollBack => max(0' "$FILE"; then
@@ -106,7 +106,7 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
-# Patch 6: painter.dart — underline and verticalBar cursor Y offset missing offset.dy
+# Patch 6: painter.dart - underline and verticalBar cursor Y offset missing offset.dy
 FILE="$XTERM_DIR/ui/painter.dart"
 if [ -f "$FILE" ]; then
   if grep -q 'Offset(offset.dx, _cellSize.height - 1)' "$FILE"; then
@@ -120,8 +120,8 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
-# Patch 7: custom_text_edit.dart — prevent IME text duplication (e.g. Baidu
-#   predictive text: "app" + "apple" prediction → was "appapple")
+# Patch 7: custom_text_edit.dart - prevent IME text duplication (e.g. Baidu
+#   predictive text: "app" + "apple" prediction -> was "appapple")
 #   Root cause: updateEditingValue reset editing state to _initEditingState
 #   after each character, breaking the IME's text accumulation. When the IME
 #   later commits a predicted word, the delta was computed from the stale
@@ -154,13 +154,13 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
-# Patch 8: render.dart — paint selection BEFORE text lines so text is readable
-#   Original order: paintLine (bg+fg) → cursor → selection → highlights
+# Patch 8: render.dart - paint selection BEFORE text lines so text is readable
+#   Original order: paintLine (bg+fg) -> cursor -> selection -> highlights
 #   The selection rectangle was painted ON TOP of rendered text, completely
 #   obscuring it with a solid gray block.
 #   Fixed: paint selection BEFORE paintLine, then text renders on top. For
 #   cells with default background the selection highlight shows through; for
-#   cells with explicit background the cell bg paints over it — both cases
+#   cells with explicit background the cell bg paints over it - both cases
 #   leave the text character clearly visible on top.
 FILE="$XTERM_DIR/ui/render.dart"
 if [ -f "$FILE" ]; then
@@ -177,9 +177,9 @@ fi
 
 echo "Done. All xterm patches applied."
 
-# Final verification — confirm key patches took effect
+# Final verification - confirm key patches took effect
 if grep -q "action == TextInputAction.done" "$XTERM_DIR/terminal_view.dart" 2>/dev/null; then
   echo "ERROR: terminal_view.dart was NOT patched (Enter key fix missing)"
   exit 1
 fi
-echo "Verification passed — all patches confirmed."
+echo "Verification passed - all patches confirmed."
