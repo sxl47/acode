@@ -13,9 +13,9 @@ if (Test-Path $pkgConfig) {
   if ($xtermPkg) {
     $uri = $xtermPkg.rootUri
     if ($uri -match '^file:///') {
-      $srcDir = Join-Path ($uri -replace '^file:///', '') "lib" "src"
+      $srcDir = [IO.Path]::Combine(($uri -replace '^file:///', ''), 'lib', 'src')
     } elseif ($uri -match '^file://') {
-      $srcDir = Join-Path ($uri -replace '^file://', '') "lib" "src"
+      $srcDir = [IO.Path]::Combine(($uri -replace '^file://', ''), 'lib', 'src')
     }
   }
 }
@@ -24,7 +24,7 @@ if (-not $srcDir -or -not (Test-Path $srcDir)) {
   $pubCache = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Pub\Cache" } else { "$env:USERPROFILE\.pub-cache" }
   $xtermDirs = Get-ChildItem -Path "$pubCache\hosted" -Recurse -Filter "xterm-4.0.0" -Directory -ErrorAction SilentlyContinue
   if ($xtermDirs) {
-    $srcDir = Join-Path $xtermDirs[0].FullName "lib" "src"
+    $srcDir = [IO.Path]::Combine($xtermDirs[0].FullName, 'lib', 'src')
   }
 }
 

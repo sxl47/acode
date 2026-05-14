@@ -21,7 +21,7 @@ XTERM_DIR=""
 if [ -f .dart_tool/package_config.json ]; then
   XTERM_DIR=$(grep -A2 '"name": "xterm"' .dart_tool/package_config.json \
     | grep '"rootUri"' \
-    | sed 's/.*"rootUri": "file:\/\///;s/".*//' \
+    | sed 's/.*"rootUri": "file:\/\/\(.*\)"/\1/' \
     | head -1)/lib/src
 fi
 
