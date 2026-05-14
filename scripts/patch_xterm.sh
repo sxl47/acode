@@ -175,6 +175,21 @@ if [ -f "$FILE" ]; then
   fi
 fi
 
+# Patch 9: custom_text_edit.dart - handle keyEvent.character for desktop keyboard
+#   With hardwareKeyboardOnly:false, CustomTextEdit uses _handleKeyEvent which
+#   returns KeyEventResult.ignored for regular character keys (no text input on
+#   desktop). CustomKeyboardListener has a keyEvent.character fallback; add the
+#   same fallback here so desktop keyboard input works while keeping IME support.
+FILE="$XTERM_DIR/ui/custom_text_edit.dart"
+if [ -f "$FILE" ]; then
+  if grep -q "event.character" "$FILE" 2>/dev/null; then
+    echo "  [10/10] custom_text_edit.dart already patched (keyEvent.character fallback)"
+  else
+    perl -i -0 -pe 's/return widget\.onKeyEvent\(focusNode, event\);/final result = widget.onKeyEvent(focusNode, event);\n      if (result == KeyEventResult.ignored) {\n        if (event.character != null \&\& event.character != "") {\n          widget.onInsert(event.character!);\n          return KeyEventResult.handled;\n        }\n      }\n      return result;/gms' "$FILE"
+    echo "  [10/10] Patched custom_text_edit.dart (keyEvent.character fallback)"
+  fi
+fi
+
 echo "Done. All xterm patches applied."
 
 # Final verification - confirm key patches took effect

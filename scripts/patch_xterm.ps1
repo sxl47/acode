@@ -197,6 +197,28 @@ if (Test-Path $renderFile2) {
   }
 }
 
+# Patch 9: custom_text_edit.dart - handle keyEvent.character for desktop keyboard input
+$customEditFile = "$srcDir\ui\custom_text_edit.dart"
+if (Test-Path $customEditFile) {
+  $content = Get-Content $customEditFile -Raw
+  if ($content -match 'event\.character') {
+    Write-Host '  [10/10] custom_text_edit.dart already patched (keyEvent.character fallback)'
+  } else {
+    $pattern = 'return widget\.onKeyEvent\(focusNode, event\);'
+    $replacement = '      final result = widget.onKeyEvent(focusNode, event);'
+    $replacement += "`n" + '      if (result == KeyEventResult.ignored) {'
+    $replacement += "`n" + '        if (event.character != null && event.character != "") {'
+    $replacement += "`n" + '          widget.onInsert(event.character!);'
+    $replacement += "`n" + '          return KeyEventResult.handled;'
+    $replacement += "`n" + '        }'
+    $replacement += "`n" + '      }'
+    $replacement += "`n" + '      return result;'
+    $content = $content -replace $pattern, $replacement
+    Set-Content $customEditFile $content -NoNewline
+    Write-Host '  [10/10] Patched custom_text_edit.dart (keyEvent.character fallback)'
+  }
+}
+
 Write-Host "Done. All xterm patches applied."
 
 # Final verification - confirm key patches took effect
