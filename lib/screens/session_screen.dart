@@ -830,6 +830,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                 fontFamily: 'monospace',
               ),
               autofocus: true,
+              hardwareKeyboardOnly: !Platform.isAndroid && !Platform.isIOS,
               readOnly: (Platform.isAndroid || Platform.isIOS)
                   ? !_keyboardVisible
                   : false,
