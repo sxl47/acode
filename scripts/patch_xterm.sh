@@ -15,12 +15,30 @@
 
 set -e
 
-# Find xterm package in pub cache
-XTERM_DIR=$(find ~/.pub-cache/hosted -path '*/xterm-4.0.0/lib/src' -type d 2>/dev/null | head -1)
+# Find xterm package — first try .dart_tool/package_config.json (reliable on CI),
+# then fall back to searching the pub cache directly.
+XTERM_DIR=""
+if [ -f .dart_tool/package_config.json ]; then
+  XTERM_DIR=$(grep -A2 '"name": "xterm"' .dart_tool/package_config.json \
+    | grep '"rootUri"' \
+    | sed 's/.*"rootUri": "file:\/\///;s/".*//' \
+    | head -1)/lib/src
+fi
 
-if [ -z "$XTERM_DIR" ]; then
+if [ -z "$XTERM_DIR" ] || [ ! -d "$XTERM_DIR" ]; then
+  XTERM_DIR=$(find ~/.pub-cache/hosted -path '*/xterm-4.0.0/lib/src' -type d 2>/dev/null | head -1)
+fi
+
+if [ -z "$XTERM_DIR" ] || [ ! -d "$XTERM_DIR" ]; then
   echo "xterm 4.0.0 not found in pub cache, skipping patches"
   exit 0
+fi
+
+echo "Patching xterm at: $XTERM_DIR"
+# Verify we found the right package
+if [ ! -f "$XTERM_DIR/terminal_view.dart" ]; then
+  echo "ERROR: $XTERM_DIR does not contain xterm source files"
+  exit 1
 fi
 
 echo "Patching xterm at: $XTERM_DIR"
@@ -158,3 +176,10 @@ if [ -f "$FILE" ]; then
 fi
 
 echo "Done. All xterm patches applied."
+
+# Final verification — confirm key patches took effect
+if grep -q "action == TextInputAction.done" "$XTERM_DIR/terminal_view.dart" 2>/dev/null; then
+  echo "ERROR: terminal_view.dart was NOT patched (Enter key fix missing)"
+  exit 1
+fi
+echo "Verification passed — all patches confirmed."

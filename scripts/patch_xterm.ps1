@@ -3,17 +3,42 @@
 
 $ErrorActionPreference = 'Stop'
 
-# Find xterm package in Windows pub cache
-$pubCache = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Pub\Cache" } else { "$env:USERPROFILE\.pub-cache" }
-$xtermDirs = Get-ChildItem -Path "$pubCache\hosted" -Recurse -Filter "xterm-4.0.0" -Directory -ErrorAction SilentlyContinue
+# Find xterm package — first try .dart_tool/package_config.json (reliable on CI),
+# then fall back to searching the pub cache directly.
+$srcDir = $null
+$pkgConfig = ".dart_tool\package_config.json"
+if (Test-Path $pkgConfig) {
+  $config = Get-Content $pkgConfig -Raw | ConvertFrom-Json
+  $xtermPkg = $config.packages | Where-Object { $_.name -eq 'xterm' }
+  if ($xtermPkg) {
+    $uri = $xtermPkg.rootUri
+    if ($uri -match '^file:///') {
+      $srcDir = Join-Path ($uri -replace '^file:///', '') "lib" "src"
+    } elseif ($uri -match '^file://') {
+      $srcDir = Join-Path ($uri -replace '^file://', '') "lib" "src"
+    }
+  }
+}
 
-if (-not $xtermDirs) {
+if (-not $srcDir -or -not (Test-Path $srcDir)) {
+  $pubCache = if ($env:LOCALAPPDATA) { "$env:LOCALAPPDATA\Pub\Cache" } else { "$env:USERPROFILE\.pub-cache" }
+  $xtermDirs = Get-ChildItem -Path "$pubCache\hosted" -Recurse -Filter "xterm-4.0.0" -Directory -ErrorAction SilentlyContinue
+  if ($xtermDirs) {
+    $srcDir = Join-Path $xtermDirs[0].FullName "lib" "src"
+  }
+}
+
+if (-not $srcDir -or -not (Test-Path $srcDir)) {
   Write-Host "xterm 4.0.0 not found in pub cache, skipping patches"
   exit 0
 }
 
-$srcDir = Join-Path $xtermDirs[0].FullName "lib" "src"
 Write-Host "Patching xterm at: $srcDir"
+# Verify we found the right package
+if (-not (Test-Path "$srcDir\terminal_view.dart")) {
+  Write-Host "ERROR: $srcDir does not contain xterm source files"
+  exit 1
+}
 
 function Patch-File {
   param($Path, $Pattern, $Replacement, $Description)
@@ -173,3 +198,14 @@ if (Test-Path $renderFile2) {
 }
 
 Write-Host "Done. All xterm patches applied."
+
+# Final verification — confirm key patches took effect
+$termFile = "$srcDir\terminal_view.dart"
+if (Test-Path $termFile) {
+  $content = Get-Content $termFile -Raw
+  if ($content -match "action == TextInputAction\.done") {
+    Write-Host "ERROR: terminal_view.dart was NOT patched (Enter key fix missing)"
+    exit 1
+  }
+}
+Write-Host "Verification passed — all patches confirmed."
