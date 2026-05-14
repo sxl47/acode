@@ -36,7 +36,11 @@ class TerminalService {
     _terminal = terminal;
   }
 
-  Future<void> attachToSession(String tmuxSessionName, {String? startCommand, String? workingDir}) async {
+  Future<void> attachToSession(
+    String tmuxSessionName, {
+    String? startCommand,
+    String? workingDir,
+  }) async {
     if (_isConnecting) return;
     _isConnecting = true;
     try {
@@ -49,20 +53,21 @@ class TerminalService {
       // Check if tmux session exists using exec (no terminal echo pollution)
       bool sessionExists = false;
       try {
-        final result = await _ssh.exec("tmux has-session -t '$escapedName' 2>&1; echo \$?");
+        final result = await _ssh.exec(
+          "tmux has-session -t '$escapedName' 2>&1; echo \$?",
+        );
         sessionExists = result.trimRight().endsWith('0');
       } catch (_) {
         sessionExists = false;
       }
 
       _explicitDetach = false;
-      _session = await _ssh.openShell(
-        width: _terminal?.viewWidth,
-        height: _terminal?.viewHeight,
-      ).timeout(
-        const Duration(seconds: 30),
-        onTimeout: () => throw TimeoutException('SSH shell open timed out'),
-      );
+      _session = await _ssh
+          .openShell(width: _terminal?.viewWidth, height: _terminal?.viewHeight)
+          .timeout(
+            const Duration(seconds: 30),
+            onTimeout: () => throw TimeoutException('SSH shell open timed out'),
+          );
 
       // Feed SSH stdout/stderr to the terminal via streaming UTF-8 decoder.
       // The StreamTransformer handles multi-byte characters split across chunks.
@@ -93,7 +98,9 @@ class TerminalService {
       // Uses send-keys so the command runs in an interactive shell that
       // sources .bashrc, making environment variables available to the CLI tool.
       if (!sessionExists && startCommand != null && startCommand.isNotEmpty) {
-        final rawDir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
+        final rawDir = (workingDir != null && workingDir.isNotEmpty)
+            ? workingDir
+            : '~';
         // Don't single-quote paths starting with ~ so bash can expand them
         final cdDir = (rawDir == '~' || rawDir.startsWith('~/'))
             ? rawDir
@@ -106,11 +113,19 @@ class TerminalService {
         final cmd =
             "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName' 2>/dev/null && "
             "tmux set -t '$escapedName' status off 2>/dev/null && "
+            "tmux set -t '$escapedName' mouse on 2>/dev/null && "
             "tmux send-keys -t '$escapedName' 'cd $sendKeysDir && exec $startCommand' Enter\" 2>/dev/null; "
-            "tmux set -t '$escapedName' status off 2>/dev/null; tmux attach -t '$escapedName'\n";
+            "tmux set -t '$escapedName' status off 2>/dev/null; "
+            "tmux set -t '$escapedName' mouse on 2>/dev/null; "
+            "tmux set -g alternate-screen off 2>/dev/null;"
+            "tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       } else {
-        final cmd = "tmux set -t '$escapedName' status off 2>/dev/null; tmux attach -t '$escapedName'\n";
+        final cmd =
+            "tmux set -t '$escapedName' status off 2>/dev/null; "
+            "tmux set -t '$escapedName' mouse on 2>/dev/null; "
+            "tmux set -g alternate-screen off 2>/dev/null;"
+            "tmux attach -t '$escapedName'\n";
         _session!.write(utf8.encode(cmd));
       }
     } finally {

@@ -9,15 +9,13 @@ class TmuxSessionInfo {
   final String? attached;
   final String? windows;
 
-  TmuxSessionInfo({
-    required this.name,
-    this.attached,
-    this.windows,
-  });
+  TmuxSessionInfo({required this.name, this.attached, this.windows});
 
   static TmuxSessionInfo? parse(String line) {
     // Format: name: windows (attached)
-    final match = RegExp(r'^([^:]+):\s+(\d+)\s+windows\s*(\(attached\))?$').firstMatch(line.trim());
+    final match = RegExp(
+      r'^([^:]+):\s+(\d+)\s+windows\s*(\(attached\))?$',
+    ).firstMatch(line.trim());
     if (match == null) return null;
     return TmuxSessionInfo(
       name: match.group(1)!,
@@ -48,8 +46,14 @@ class TmuxService {
     }
   }
 
-  Future<void> createSession(String name, String command, {String? workingDir}) async {
-    final dir = (workingDir != null && workingDir.isNotEmpty) ? workingDir : '~';
+  Future<void> createSession(
+    String name,
+    String command, {
+    String? workingDir,
+  }) async {
+    final dir = (workingDir != null && workingDir.isNotEmpty)
+        ? workingDir
+        : '~';
     final escapedName = _shellEscape(name);
     // Don't single-quote paths starting with ~ so bash can expand them
     final cdDir = (dir == '~' || dir.startsWith('~/'))
@@ -57,8 +61,10 @@ class TmuxService {
         : "'${_shellEscape(dir)}'";
     // Create empty tmux session — runs the default interactive shell,
     // which sources .bashrc and makes env vars available.
+    // Enable mouse mode so scroll events work on mobile.
     await _ssh.exec(
-      "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName'\"",
+      "bash -c \"cd $cdDir && tmux new-session -d -s '$escapedName'"
+      " && tmux set -t '$escapedName' mouse on\"",
     );
     // Send the command via send-keys so it runs through the interactive
     // shell where .bashrc has been sourced.
@@ -72,18 +78,14 @@ class TmuxService {
 
   Future<void> sendKeys(String sessionName, String input) async {
     // Inside single quotes, only ' and \ need escaping
-    final escaped = input
-        .replaceAll(r'\', r'\\')
-        .replaceAll("'", r"'\''");
+    final escaped = input.replaceAll(r'\', r'\\').replaceAll("'", r"'\''");
     final escapedName = _shellEscape(sessionName);
     await _ssh.exec("tmux send-keys -t '$escapedName' '$escaped' Enter");
   }
 
   Future<void> sendRawKeys(String sessionName, String input) async {
     // Send without Enter key - for special key combos
-    final escaped = input
-        .replaceAll(r'\', r'\\')
-        .replaceAll("'", r"'\''");
+    final escaped = input.replaceAll(r'\', r'\\').replaceAll("'", r"'\''");
     final escapedName = _shellEscape(sessionName);
     await _ssh.exec("tmux send-keys -t '$escapedName' '$escaped'");
   }
@@ -95,7 +97,9 @@ class TmuxService {
 
   Future<bool> sessionExists(String name) async {
     final escapedName = _shellEscape(name);
-    final result = await _ssh.exec("tmux has-session -t '$escapedName' 2>&1; echo \$?");
+    final result = await _ssh.exec(
+      "tmux has-session -t '$escapedName' 2>&1; echo \$?",
+    );
     // Check for exact exit code 0 (not just absence of '1', which would
     // false-match exit codes like 127)
     return result.trimRight().endsWith('0');

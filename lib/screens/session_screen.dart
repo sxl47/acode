@@ -17,11 +17,7 @@ class SessionScreen extends ConsumerStatefulWidget {
   final Session session;
   final ServerConfig server;
 
-  const SessionScreen({
-    super.key,
-    required this.session,
-    required this.server,
-  });
+  const SessionScreen({super.key, required this.session, required this.server});
 
   @override
   ConsumerState<SessionScreen> createState() => _SessionScreenState();
@@ -56,6 +52,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   bool _isDraggingStart = false;
   bool _isDraggingEnd = false;
 
+  // Scroll accumulation for touch-based scrolling via tmux mouse events
+  double _scrollAccum = 0;
 
   static const _darkTheme = TerminalTheme(
     cursor: Color(0xFFAEAFAD),
@@ -177,7 +175,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         if (mounted) _connect();
       });
     } else {
-      setState(() => _connectionStatus = 'Disconnected. Tap Retry to reconnect.');
+      setState(
+        () => _connectionStatus = 'Disconnected. Tap Retry to reconnect.',
+      );
     }
   }
 
@@ -188,7 +188,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     setState(() => _connectionStatus = 'Connecting to server...');
 
     try {
-      final notifier = ref.read(sshConnectionProvider(widget.server.id).notifier);
+      final notifier = ref.read(
+        sshConnectionProvider(widget.server.id).notifier,
+      );
       final connState = ref.read(sshConnectionProvider(widget.server.id));
       final existingConn = connState.valueOrNull;
 
@@ -224,8 +226,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           workingDir: widget.session.workingDir,
         );
         _wrapTerminalOutput();
+        // Exit alternate screen so xterm scrollback + scrollbar work
+        _terminal.write('\x1b[?1049l');
       } catch (e) {
-        if (e.toString().contains('Transport') || e.toString().contains('closed')) {
+        if (e.toString().contains('Transport') ||
+            e.toString().contains('closed')) {
           await notifier.disconnect();
           await notifier.connect(widget.server);
           conn = ref.read(sshConnectionProvider(widget.server.id)).valueOrNull;
@@ -237,6 +242,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
             workingDir: widget.session.workingDir,
           );
           _wrapTerminalOutput();
+          _terminal.write('\x1b[?1049l');
         } else {
           rethrow;
         }
@@ -250,22 +256,26 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
       // Debug: log initial cursor state
       final buf = _terminal.buffer;
-      debugPrint('[CURSOR DEBUG] INITIAL: cursorY=${buf.cursorY} '
-          'absoluteCursorY=${buf.absoluteCursorY} '
-          'scrollBack=${buf.scrollBack} '
-          'viewHeight=${buf.viewHeight} '
-          'height=${buf.height} '
-          'cursorX=${buf.cursorX}');
+      debugPrint(
+        '[CURSOR DEBUG] INITIAL: cursorY=${buf.cursorY} '
+        'absoluteCursorY=${buf.absoluteCursorY} '
+        'scrollBack=${buf.scrollBack} '
+        'viewHeight=${buf.viewHeight} '
+        'height=${buf.height} '
+        'cursorX=${buf.cursorX}',
+      );
 
       // Debug: periodic cursor position logging
       _debugTimer = Timer.periodic(const Duration(seconds: 2), (_) {
         final buf = _terminal.buffer;
-        debugPrint('[CURSOR DEBUG] cursorY=${buf.cursorY} '
-            'absoluteCursorY=${buf.absoluteCursorY} '
-            'scrollBack=${buf.scrollBack} '
-            'viewHeight=${buf.viewHeight} '
-            'height=${buf.height} '
-            'cursorX=${buf.cursorX}');
+        debugPrint(
+          '[CURSOR DEBUG] cursorY=${buf.cursorY} '
+          'absoluteCursorY=${buf.absoluteCursorY} '
+          'scrollBack=${buf.scrollBack} '
+          'viewHeight=${buf.viewHeight} '
+          'height=${buf.height} '
+          'cursorX=${buf.cursorX}',
+        );
       });
     } catch (e) {
       setState(() => _connectionStatus = 'Error: $e');
@@ -299,11 +309,13 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     _terminal.onOutput = (String data) {
       if (_ctrlActive && data.length == 1) {
         final c = data.codeUnitAt(0);
-        if (c >= 0x61 && c <= 0x7A) { // a-z
+        if (c >= 0x61 && c <= 0x7A) {
+          // a-z
           original(String.fromCharCode(c - 96));
           return;
         }
-        if (c >= 0x41 && c <= 0x5A) { // A-Z
+        if (c >= 0x41 && c <= 0x5A) {
+          // A-Z
           original(String.fromCharCode(c - 64));
           return;
         }
@@ -318,12 +330,14 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final buf = _terminal.buffer;
     if (buf.cursorY != _lastCursorY) {
       _lastCursorY = buf.cursorY;
-      debugPrint('[CURSOR CHANGED] cursorY=${buf.cursorY} '
-          'absoluteCursorY=${buf.absoluteCursorY} '
-          'scrollBack=${buf.scrollBack} '
-          'viewHeight=${buf.viewHeight} '
-          'height=${buf.height} '
-          'cursorX=${buf.cursorX}');
+      debugPrint(
+        '[CURSOR CHANGED] cursorY=${buf.cursorY} '
+        'absoluteCursorY=${buf.absoluteCursorY} '
+        'scrollBack=${buf.scrollBack} '
+        'viewHeight=${buf.viewHeight} '
+        'height=${buf.height} '
+        'cursorX=${buf.cursorX}',
+      );
     }
   }
 
@@ -404,7 +418,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
   void _onStartHandleDragEnd(_) {
     _isDraggingStart = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHandlePositions());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateHandlePositions(),
+    );
   }
 
   void _onEndHandleDrag(DragUpdateDetails details) {
@@ -425,7 +441,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
   void _onEndHandleDragEnd(_) {
     _isDraggingEnd = false;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _updateHandlePositions());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _updateHandlePositions(),
+    );
   }
 
   List<Widget> _buildSelectionHandles() {
@@ -449,10 +467,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           onPanUpdate: _onStartHandleDrag,
           onPanEnd: _onStartHandleDragEnd,
           child: CustomPaint(
-            painter: _HandlePainter(
-              color: purple,
-              isStart: true,
-            ),
+            painter: _HandlePainter(color: purple, isStart: true),
           ),
         ),
       ),
@@ -466,14 +481,50 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
           onPanUpdate: _onEndHandleDrag,
           onPanEnd: _onEndHandleDragEnd,
           child: CustomPaint(
-            painter: _HandlePainter(
-              color: purple,
-              isStart: false,
-            ),
+            painter: _HandlePainter(color: purple, isStart: false),
           ),
         ),
       ),
     ];
+  }
+
+  // --- Touch scroll handling ---
+
+  static const double _scrollThreshold = 20.0; // ~1 cell height in pixels
+
+  void _onScrollPointerMove(PointerMoveEvent event) {
+    // Negate: finger movement and scroll semantics have opposite sign conventions
+    _handleScrollDelta(-event.delta.dy);
+  }
+
+  void _onPointerSignal(dynamic event) {
+    // PointerScrollEvent has .scrollDelta (Offset)
+    if (event is Offset) return; // not a scroll event
+    try {
+      final delta = (event.scrollDelta as Offset).dy;
+      _handleScrollDelta(delta);
+    } catch (_) {}
+  }
+
+  void _handleScrollDelta(double delta) {
+    if (!_connected || _terminalService == null) return;
+    _scrollAccum += delta;
+
+    while (_scrollAccum.abs() >= _scrollThreshold) {
+      if (_scrollAccum > 0) {
+        // Scroll down → send wheel-down SGR sequence to tmux
+        _sendScrollSignal('\x1b[<65;1;1M');
+      } else {
+        // Scroll up → send wheel-up SGR sequence to tmux
+        _sendScrollSignal('\x1b[<64;1;1M');
+      }
+      _scrollAccum -= _scrollAccum > 0 ? _scrollThreshold : -_scrollThreshold;
+    }
+  }
+
+  void _sendScrollSignal(String seq) {
+    // Send directly to SSH session (bypasses xterm's mouse mode entirely)
+    _terminalService?.sendInput(seq);
   }
 
   // --- Key sending helpers ---
@@ -535,21 +586,30 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   void _toggleAlt() {
     setState(() {
       _altActive = !_altActive;
-      if (_altActive) { _ctrlActive = false; _shiftActive = false; }
+      if (_altActive) {
+        _ctrlActive = false;
+        _shiftActive = false;
+      }
     });
   }
 
   void _toggleCtrl() {
     setState(() {
       _ctrlActive = !_ctrlActive;
-      if (_ctrlActive) { _altActive = false; _shiftActive = false; }
+      if (_ctrlActive) {
+        _altActive = false;
+        _shiftActive = false;
+      }
     });
   }
 
   void _toggleShift() {
     setState(() {
       _shiftActive = !_shiftActive;
-      if (_shiftActive) { _altActive = false; _ctrlActive = false; }
+      if (_shiftActive) {
+        _altActive = false;
+        _ctrlActive = false;
+      }
     });
   }
 
@@ -588,48 +648,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => QuickInputPage(
-          onSend: (text) => _terminal.paste(text),
-        ),
+        builder: (_) => QuickInputPage(onSend: (text) => _terminal.paste(text)),
       ),
     );
-  }
-
-  // --- Gesture handlers ---
-
-  Offset? _swipeStart;
-
-  void _onPanStart(DragStartDetails details) {
-    _swipeStart = details.localPosition;
-  }
-
-  void _onPanEnd(DragEndDetails details) {
-    if (_swipeStart == null) return;
-    final velocity = details.velocity.pixelsPerSecond;
-    final dx = velocity.dx.abs();
-    final dy = velocity.dy.abs();
-
-    // Determine if it's a vertical or horizontal swipe
-    if (dy > dx) {
-      // Vertical swipe: scroll
-      if (velocity.dy < -200) {
-        // Swipe up: scroll up (Page Up or mouse wheel up)
-        _send('\x1b[5~'); // Page Up
-      } else if (velocity.dy > 200) {
-        // Swipe down: scroll down (Page Down or mouse wheel down)
-        _send('\x1b[6~'); // Page Down
-      }
-    } else {
-      // Horizontal swipe: move cursor
-      if (velocity.dx < -200) {
-        // Swipe left: cursor left
-        _sendLeft();
-      } else if (velocity.dx > 200) {
-        // Swipe right: cursor right
-        _sendRight();
-      }
-    }
-    _swipeStart = null;
   }
 
   void _switchToAdjacentSession(int delta) {
@@ -650,20 +671,24 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final count = sessions.length.clamp(0, 9);
     final map = <ShortcutActivator, VoidCallback>{};
     final digitKeys = [
-      LogicalKeyboardKey.digit1, LogicalKeyboardKey.digit2,
-      LogicalKeyboardKey.digit3, LogicalKeyboardKey.digit4,
-      LogicalKeyboardKey.digit5, LogicalKeyboardKey.digit6,
-      LogicalKeyboardKey.digit7, LogicalKeyboardKey.digit8,
+      LogicalKeyboardKey.digit1,
+      LogicalKeyboardKey.digit2,
+      LogicalKeyboardKey.digit3,
+      LogicalKeyboardKey.digit4,
+      LogicalKeyboardKey.digit5,
+      LogicalKeyboardKey.digit6,
+      LogicalKeyboardKey.digit7,
+      LogicalKeyboardKey.digit8,
       LogicalKeyboardKey.digit9,
     ];
     for (var i = 0; i < count; i++) {
-      map[SingleActivator(digitKeys[i], alt: true)] =
-          () => _switchToSession(sessions[i].id);
+      map[SingleActivator(digitKeys[i], alt: true)] = () =>
+          _switchToSession(sessions[i].id);
     }
-    map[SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true)] =
-        () => _switchToAdjacentSession(-1);
-    map[SingleActivator(LogicalKeyboardKey.arrowRight, alt: true)] =
-        () => _switchToAdjacentSession(1);
+    map[SingleActivator(LogicalKeyboardKey.arrowLeft, alt: true)] = () =>
+        _switchToAdjacentSession(-1);
+    map[SingleActivator(LogicalKeyboardKey.arrowRight, alt: true)] = () =>
+        _switchToAdjacentSession(1);
     return map;
   }
 
@@ -672,72 +697,89 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     return CallbackShortcuts(
       bindings: _buildSessionShortcuts(),
       child: Scaffold(
-      appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.session.title, style: const TextStyle(fontSize: 16)),
-            Row(
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(
-                    color: _connected ? Colors.green : Colors.orange,
-                    shape: BoxShape.circle,
+        appBar: AppBar(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(widget.session.title, style: const TextStyle(fontSize: 16)),
+              Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _connected ? Colors.green : Colors.orange,
+                      shape: BoxShape.circle,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  _connectionStatus,
-                  style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                ),
-              ],
-            ),
-          ],
-        ),
-        actions: [
-          _buildSessionTabs(),
-          PopupMenuButton(
-            itemBuilder: (ctx) => [
-              const PopupMenuItem(
-                value: 'copy',
-                child: ListTile(leading: Icon(Icons.copy), title: Text('Copy output'), dense: true),
+                  const SizedBox(width: 6),
+                  Text(
+                    _connectionStatus,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  ),
+                ],
               ),
-              const PopupMenuItem(
-                value: 'reconnect',
-                child: ListTile(leading: Icon(Icons.refresh), title: Text('Reconnect'), dense: true),
-              ),
-              if (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
-                PopupMenuItem(
-                  value: 'keys',
+            ],
+          ),
+          actions: [
+            _buildSessionTabs(),
+            PopupMenuButton(
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(
+                  value: 'copy',
                   child: ListTile(
-                    leading: Icon(_showKeyBar ? Icons.keyboard_hide : Icons.keyboard),
-                    title: Text(_showKeyBar ? 'Hide keys' : 'Show keys'),
+                    leading: Icon(Icons.copy),
+                    title: Text('Copy output'),
                     dense: true,
                   ),
                 ),
-              const PopupMenuItem(
-                value: 'kill',
-                child: ListTile(leading: Icon(Icons.stop_circle, color: Colors.red), title: Text('Kill Session', style: TextStyle(color: Colors.red)), dense: true),
-              ),
-            ],
-            onSelected: (value) {
-              if (value == 'copy') _copyOutput();
-              if (value == 'reconnect') _connect();
-              if (value == 'keys') setState(() => _showKeyBar = !_showKeyBar);
-              if (value == 'kill') _killSession();
-            },
-          ),
-        ],
+                const PopupMenuItem(
+                  value: 'reconnect',
+                  child: ListTile(
+                    leading: Icon(Icons.refresh),
+                    title: Text('Reconnect'),
+                    dense: true,
+                  ),
+                ),
+                if (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+                  PopupMenuItem(
+                    value: 'keys',
+                    child: ListTile(
+                      leading: Icon(
+                        _showKeyBar ? Icons.keyboard_hide : Icons.keyboard,
+                      ),
+                      title: Text(_showKeyBar ? 'Hide keys' : 'Show keys'),
+                      dense: true,
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'kill',
+                  child: ListTile(
+                    leading: Icon(Icons.stop_circle, color: Colors.red),
+                    title: Text(
+                      'Kill Session',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                    dense: true,
+                  ),
+                ),
+              ],
+              onSelected: (value) {
+                if (value == 'copy') _copyOutput();
+                if (value == 'reconnect') _connect();
+                if (value == 'keys') setState(() => _showKeyBar = !_showKeyBar);
+                if (value == 'kill') _killSession();
+              },
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            Expanded(child: _buildTerminalOutput()),
+            if (_connected && _showKeyBar) _buildKeyBar(),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          Expanded(child: _buildTerminalOutput()),
-          if (_connected && _showKeyBar) _buildKeyBar(),
-        ],
-      ),
-    ),
     );
   }
 
@@ -767,14 +809,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
     const fontSize = 14.0;
 
-    Widget terminal = LayoutBuilder(
+    Widget terminal = Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _scrollAccum = 0,
+      onPointerMove: _onScrollPointerMove,
+      onPointerSignal: _onPointerSignal,
+      child: LayoutBuilder(
       builder: (context, constraints) {
-        return GestureDetector(
-          onPanStart: _onPanStart,
-          onPanEnd: _onPanEnd,
-          child: Container(
-            color: _terminalTheme.background,
-            child: TerminalView(
+        return Container(
+          color: _terminalTheme.background,
+          child: TerminalView(
               _terminal,
               key: _terminalViewKey,
               controller: _terminalController,
@@ -784,7 +828,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                 fontFamily: 'monospace',
               ),
               autofocus: true,
-              readOnly: (Platform.isAndroid || Platform.isIOS) ? !_keyboardVisible : false,
+              readOnly: (Platform.isAndroid || Platform.isIOS)
+                  ? !_keyboardVisible
+                  : false,
               deleteDetection: true,
               keyboardType: TextInputType.text,
               keyboardAppearance: Brightness.dark,
@@ -792,9 +838,9 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
               simulateScroll: false,
               cursorType: TerminalCursorType.underline,
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
 
     // Overlay a semi-transparent status when not yet connected
@@ -839,12 +885,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     // Overlay selection handles on top of terminal
     final handles = _buildSelectionHandles();
     if (_selectionActive && handles.isNotEmpty) {
-      terminal = Stack(
-        children: [
-          terminal,
-          ...handles,
-        ],
-      );
+      terminal = Stack(children: [terminal, ...handles]);
     }
 
     return terminal;
@@ -878,7 +919,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
               _KeyDef('↑', _sendUp),
               _KeyDef('End', _sendEnd),
               _KeyDef('📋', _openQuickInput),
-              _KeyDef('Bsp', _sendBackspace),
+              _KeyDef('Bsp', _sendBackspace, onRepeat: _sendBackspace),
             ]),
             // Row 3: Ctrl Alt ← ↓ → Keyboard Enter
             _buildKeyRow([
@@ -903,17 +944,16 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final onSurface = theme.colorScheme.onSurface;
     return Row(
       children: keys.map((key) {
-        return Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(1),
-            child: SizedBox(
-              height: 36,
-              child: TextButton(
+        final button = key.onRepeat != null
+            ? _RepeatButton(
+                label: key.label,
+                onTap: key.onTap,
+                active: key.active,
+              )
+            : TextButton(
                 onPressed: key.onTap,
                 style: TextButton.styleFrom(
-                  backgroundColor: key.active
-                      ? primary
-                      : surfaceVariant,
+                  backgroundColor: key.active ? primary : surfaceVariant,
                   foregroundColor: key.active
                       ? theme.colorScheme.onPrimary
                       : onSurface.withValues(alpha: 0.8),
@@ -924,8 +964,11 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                   textStyle: const TextStyle(fontSize: 12),
                 ),
                 child: Text(key.label),
-              ),
-            ),
+              );
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(1),
+            child: SizedBox(height: 36, child: button),
           ),
         );
       }).toList(),
@@ -936,13 +979,15 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     final text = _terminal.buffer.getText();
     Clipboard.setData(ClipboardData(text: text));
     ref.read(clipboardHistoryProvider.notifier).add(text);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied to clipboard')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
   }
 
   void _switchToSession(String sessionId) {
     if (sessionId == widget.session.id) return;
+    // Dismiss keyboard before switching to prevent flicker
+    FocusManager.instance.primaryFocus?.unfocus();
     final sessionsAsync = ref.read(serverSessionsProvider(widget.server.id));
     final sessions = sessionsAsync.valueOrNull;
     if (sessions == null) return;
@@ -991,7 +1036,10 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                        textStyle: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       child: Text('${index + 1}'),
                     ),
@@ -1015,16 +1063,25 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
               child: Row(
                 children: [
                   if (isCurrent)
-                    Icon(Icons.check, size: 16, color: theme.colorScheme.primary)
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    )
                   else
                     const SizedBox(width: 16),
                   const SizedBox(width: 8),
-                  Text('${index + 1}. ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '${index + 1}. ',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   Expanded(
                     child: Text(
                       s.title,
                       style: TextStyle(
-                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                        fontWeight: isCurrent
+                            ? FontWeight.bold
+                            : FontWeight.normal,
                         color: isCurrent ? theme.colorScheme.primary : null,
                       ),
                       overflow: TextOverflow.ellipsis,
@@ -1046,7 +1103,8 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
       builder: (ctx) => AlertDialog(
         title: const Text('Kill Session'),
         content: const Text(
-            'This will terminate the CLI tool on the server. Continue?'),
+          'This will terminate the CLI tool on the server. Continue?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1075,8 +1133,86 @@ class _KeyDef {
   final String label;
   final VoidCallback onTap;
   final bool active;
+  final VoidCallback? onRepeat;
 
-  const _KeyDef(this.label, this.onTap, {this.active = false});
+  const _KeyDef(this.label, this.onTap, {this.active = false, this.onRepeat});
+}
+
+class _RepeatButton extends StatefulWidget {
+  final String label;
+  final VoidCallback onTap;
+  final bool active;
+
+  const _RepeatButton({
+    required this.label,
+    required this.onTap,
+    this.active = false,
+  });
+
+  @override
+  State<_RepeatButton> createState() => _RepeatButtonState();
+}
+
+class _RepeatButtonState extends State<_RepeatButton> {
+  Timer? _timer;
+  bool _isPressing = false;
+
+  void _onLongPressStart(_) {
+    _isPressing = true;
+    _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      widget.onTap();
+    });
+    Future.delayed(const Duration(seconds: 1), () {
+      if (_isPressing && mounted) {
+        _timer?.cancel();
+        _timer = Timer.periodic(const Duration(milliseconds: 40), (_) {
+          widget.onTap();
+        });
+      }
+    });
+  }
+
+  void _stopRepeat() {
+    _isPressing = false;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void dispose() {
+    _stopRepeat();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    final surfaceVariant = theme.colorScheme.surfaceContainerHighest;
+    final onSurface = theme.colorScheme.onSurface;
+    return GestureDetector(
+      onTap: widget.onTap,
+      onLongPressStart: _onLongPressStart,
+      onLongPressEnd: (_) => _stopRepeat(),
+      onLongPressCancel: _stopRepeat,
+      child: Container(
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: widget.active ? primary : surfaceVariant,
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          widget.label,
+          style: TextStyle(
+            fontSize: 12,
+            color: widget.active
+                ? theme.colorScheme.onPrimary
+                : onSurface.withValues(alpha: 0.8),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _HandlePainter extends CustomPainter {
