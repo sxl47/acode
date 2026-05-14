@@ -91,8 +91,7 @@ jobs:
       - run: flutter pub get
 
       - name: Apply xterm patches
-        run: bash scripts/patch_xterm.sh
-        shell: bash
+        run: powershell -File scripts/patch_xterm.ps1
 
       - run: flutter build windows --release
 
