@@ -844,7 +844,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
               readOnly: (Platform.isAndroid || Platform.isIOS)
                   ? !_keyboardVisible
                   : false,
-              deleteDetection: true,
+              deleteDetection: Platform.isAndroid || Platform.isIOS,
               keyboardType: TextInputType.text,
               keyboardAppearance: Brightness.dark,
               backgroundOpacity: 1.0,
