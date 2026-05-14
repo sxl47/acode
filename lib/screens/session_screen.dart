@@ -259,6 +259,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
         _connectionStatus = 'Connected';
       });
 
+      // Desktop: force-open text input connection so physical keyboard
+      // and IME (Chinese/Japanese/Korean) input work. On mobile, the
+      // on-screen keyboard is toggled explicitly by the user.
+      if (!Platform.isAndroid && !Platform.isIOS) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _terminalViewKey.currentState?.requestKeyboard();
+          }
+        });
+      }
+
       // Debug: log initial cursor state
       final buf = _terminal.buffer;
       debugPrint(
@@ -830,7 +841,6 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
                 fontFamily: 'monospace',
               ),
               autofocus: true,
-              hardwareKeyboardOnly: !Platform.isAndroid && !Platform.isIOS,
               readOnly: (Platform.isAndroid || Platform.isIOS)
                   ? !_keyboardVisible
                   : false,
