@@ -40,6 +40,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
   late bool _showKeyBar;
   bool _keyboardVisible = false;
   bool _userToggleKeyboard = false;
+  bool _settled = false;
   bool _terminalReady = false;
   final _terminalViewKey = GlobalKey<TerminalViewState>();
   final _terminalController = TerminalController();
@@ -150,6 +151,17 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _userToggleKeyboard) return;
       final bottom = MediaQuery.of(context).viewInsets.bottom;
+      if (!_settled) {
+        // Wait until the keyboard is fully closed before enabling
+        // detection. During the initial frames after a session switch,
+        // the previous screen's TextInputConnection may still be
+        // closing, and intermediate viewInsets values would toggle
+        // readOnly and re-open the keyboard.
+        if (bottom == 0) {
+          setState(() => _settled = true);
+        }
+        return;
+      }
       final keyboardOpen = bottom > 0;
       if (_keyboardVisible != keyboardOpen) {
         setState(() => _keyboardVisible = keyboardOpen);
@@ -999,8 +1011,7 @@ class _SessionScreenState extends ConsumerState<SessionScreen>
 
   void _switchToSession(String sessionId) {
     if (sessionId == widget.session.id) return;
-    // Dismiss keyboard before switching to prevent flicker
-    FocusManager.instance.primaryFocus?.unfocus();
+    _terminalViewKey.currentState?.closeKeyboard();
     final sessionsAsync = ref.read(serverSessionsProvider(widget.server.id));
     final sessions = sessionsAsync.valueOrNull;
     if (sessions == null) return;
