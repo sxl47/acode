@@ -1,3 +1,3 @@
 [submodule "packages/xterm"]
 	path = packages/xterm
-	url = https://github.com/sxl47/xterm.dart.git
+	url = git@github.com:sxl47/xterm.dart.git
